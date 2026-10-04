@@ -287,6 +287,10 @@ void TrafficSystem::init() {
     int highwayN   = addVehicleRoute(V{ { 0, -7 }, { 0, -1 }, { 1, -1 }, { 1, -2 }, { 0, -2 } });
     int highwayS   = addVehicleRoute(V{ { 0, 7 }, { 0, 1 }, { -1, 1 }, { -1, 2 }, { 0, 2 } });
     int westLoop   = addVehicleRoute(V{ { -2, 0 }, { 0, 0 }, { 0, 2 }, { -2, 2 } });
+    int ring       = addVehicleRoute(V{ { -3, -3 }, { 3, -3 }, { 3, 3 }, { -3, 3 } });       // outer districts
+    int ringRev    = addVehicleRoute(V{ { -3, -3 }, { -3, 3 }, { 3, 3 }, { 3, -3 } });
+    int northEast  = addVehicleRoute(V{ { 1, -3 }, { 3, -3 }, { 3, -1 }, { 1, -1 } });
+    int southWest  = addVehicleRoute(V{ { -3, 1 }, { -1, 1 }, { -1, 3 }, { -3, 3 } });
 
     spawnVehicles(perimeter, 7, { VT_PATROL, VT_CAR, VT_BUS, VT_CAR, VT_TRUCK, VT_CAR, VT_CNG });
     spawnVehicles(perimRev, 5, { VT_BUS, VT_CAR, VT_CNG, VT_CAR, VT_TAXI });
@@ -299,10 +303,14 @@ void TrafficSystem::init() {
     spawnVehicles(highwayN, 3, { VT_TRUCK, VT_CAR, VT_TAXI });
     spawnVehicles(highwayS, 4, { VT_CAR, VT_CNG, VT_CAR, VT_TRUCK });
     spawnVehicles(westLoop, 3, { VT_RICKSHAW, VT_CAR, VT_CNG });
+    spawnVehicles(ring, 8, { VT_TRUCK, VT_CAR, VT_BUS, VT_CNG, VT_CAR, VT_TAXI, VT_CAR, VT_RICKSHAW });
+    spawnVehicles(ringRev, 6, { VT_CAR, VT_CNG, VT_TRUCK, VT_CAR, VT_RICKSHAW, VT_BUS });
+    spawnVehicles(northEast, 3, { VT_TRUCK, VT_CAR, VT_CNG });
+    spawnVehicles(southWest, 3, { VT_RICKSHAW, VT_CAR, VT_CNG });
 
     // --- pedestrian routes: every block, plus loops that cross streets ---
-    for (int bi = -2; bi < 2; ++bi)
-        for (int bj = -2; bj < 2; ++bj) {
+    for (int bi = -HALF_N; bi < HALF_N; ++bi)
+        for (int bj = -HALF_N; bj < HALF_N; ++bj) {
             spawnPedestrians(addWalkRoute(bi, bj, bi + 1, bj + 1, false), 2);
             spawnPedestrians(addWalkRoute(bi, bj, bi + 1, bj + 1, true), 1);
         }
@@ -312,6 +320,18 @@ void TrafficSystem::init() {
     spawnPedestrians(addWalkRoute(-2, 0, 0, 2, true), 4);
     spawnPedestrians(addWalkRoute(0, -2, 2, 0, false), 3);
     spawnPedestrians(addWalkRoute(-2, -2, 0, 0, true), 3);
+
+    // --- shoppers browsing the two bazaars ---
+    for (const glm::vec2 bz : { glm::vec2(-20.0f, -100.0f), glm::vec2(-100.0f, 20.0f) })
+        for (int i = 0; i < 8; ++i) {
+            spawnPedestrians(-1, 1);
+            Pedestrian& p = pedestrians.back();
+            float lane = -6.0f + (i % 3) * 6.0f;
+            p.pos = glm::vec3(bz.x + lane + (rnd() - 0.5f) * 1.2f, KERB_H, bz.y - 9.0f + rnd() * 18.0f);
+            p.yawDeg = rnd() * 360.0f;
+            p.fwd = glm::vec3(std::sin(glm::radians(p.yawDeg)), 0.0f, std::cos(glm::radians(p.yawDeg)));
+            p.speed = p.maxSpeed = 0.0f;
+        }
 
     // --- people standing still: park, bus terminal, market fronts ---
     const glm::vec4 idle[] = {   // x, z, facing (deg), unused

@@ -58,7 +58,7 @@ uniform vec2 uFacadeCell;  // window grid cell (metres) for PAT_FACADE
 
 // Town street grid (must match Town.h)
 #define GRID       40.0   // distance between road centre lines
-#define TOWN_EDGE  80.0   // outermost road centre lines at +-80
+#define TOWN_EDGE  120.0  // outermost road centre lines at +-120
 #define ROAD_HALF  4.5    // half road width (two lanes)
 
 // Planar coordinates on a surface, picked by its dominant normal axis

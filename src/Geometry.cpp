@@ -78,7 +78,7 @@ void GeometryManager::init() {
     generateCylinder(32);
     generateSphere(24, 32);
     generateQuad();
-    generateGround(600.0f, 120);
+    generateGround(1400.0f, 140);
     generatePrism();
     generateCone(24);
 }

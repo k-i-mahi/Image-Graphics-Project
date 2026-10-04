@@ -13,6 +13,7 @@
 #include <ctime>
 #include <cmath>
 #include <algorithm>
+#include <filesystem>
 
 #include "Shader.h"
 #include "Camera.h"
@@ -107,7 +108,28 @@ const char* cameraName();
 // Windowed-mode geometry, restored when leaving fullscreen
 int windowedX = 100, windowedY = 100, windowedW = 1280, windowedH = 720;
 
+// Win32: path of the running executable (declared here to avoid pulling in windows.h next to GLAD)
+#ifdef _WIN32
+extern "C" __declspec(dllimport) unsigned long __stdcall GetModuleFileNameA(void* module, char* name, unsigned long size);
+#endif
+
+// The program loads shaders/ relative to the working directory. When it is started
+// from somewhere else (double-click, another terminal folder) use the exe's folder.
+static void findDataFolder() {
+    namespace fs = std::filesystem;
+    if (fs::exists("shaders/scene.vert")) return;
+#ifdef _WIN32
+    char path[1024] = { 0 };
+    if (GetModuleFileNameA(nullptr, path, sizeof(path)) > 0) {
+        fs::path dir = fs::path(path).parent_path();
+        if (fs::exists(dir / "shaders" / "scene.vert")) { fs::current_path(dir); return; }
+    }
+#endif
+    std::cerr << "[FATAL] shaders/ folder not found. Build with build.bat and run build-mingw/NightWatch.exe." << std::endl;
+}
+
 int main(int argc, char** argv) {
+    findDataFolder();
     parseArgs(argc, argv);
     std::cout << "======================================================================\n";
     std::cout << " NightWatch: Closed-Loop OpenGL Rendering & Spatial DIP Pipeline\n";

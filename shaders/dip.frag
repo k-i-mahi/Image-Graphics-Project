@@ -305,7 +305,7 @@ void main() {
         case 5: { // VIEW_DEPTH_MAP: Visualized view-space depth
             float rawDepth = texture(uDepthTexture, TexCoords).r;
             float linearZ = linearizeDepth(rawDepth);
-            float normalizedZ = clamp((linearZ - uNearPlane) / (uFarPlane * 0.4 - uNearPlane), 0.0, 1.0);
+            float normalizedZ = clamp((linearZ - uNearPlane) / (240.0 - uNearPlane), 0.0, 1.0);
             finalOutput = vec3(normalizedZ);
             break;
         }

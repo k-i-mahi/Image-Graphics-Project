@@ -308,15 +308,20 @@ void TownScene::addPond(const glm::vec3& c) {
 // ---------------------------------------------------------------------------
 // Layout
 // ---------------------------------------------------------------------------
-enum BlockType { B_TOWERS, B_MOSQUE, B_PARK, B_SHOPS, B_SHOPS2, B_APART, B_HOUSES, B_SCHOOL, B_POLICE, B_BUS, B_FUEL };
+enum BlockType { B_TOWERS, B_MOSQUE, B_PARK, B_SHOPS, B_SHOPS2, B_APART, B_HOUSES, B_SCHOOL, B_POLICE, B_BUS, B_FUEL,
+                 B_CRICKET, B_HOSPITAL, B_FACTORY, B_BAZAAR };
 
-// [bj][bi]: bi = 0..3 west -> east (x), bj = 0..3 north -> south (z)
-static const BlockType LAYOUT[4][4] = {
-    { B_APART,  B_SCHOOL, B_TOWERS, B_HOUSES },
-    { B_HOUSES, B_TOWERS, B_MOSQUE, B_APART  },
-    { B_SHOPS,  B_PARK,   B_SHOPS2, B_POLICE },
-    { B_FUEL,   B_APART,  B_BUS,    B_HOUSES },
+// [bj][bi]: bi = 0..5 west -> east (x), bj = 0..5 north -> south (z).
+// The inner 4 x 4 is the old town centre; the outer ring holds the newer districts.
+static const BlockType LAYOUT[6][6] = {
+    { B_HOUSES, B_APART,   B_BAZAAR,   B_APART,  B_FACTORY, B_HOUSES   },
+    { B_APART,  B_APART,   B_SCHOOL,   B_TOWERS, B_HOUSES,  B_FACTORY  },
+    { B_HOUSES, B_HOUSES,  B_TOWERS,   B_MOSQUE, B_APART,   B_APART    },
+    { B_BAZAAR, B_SHOPS,   B_PARK,     B_SHOPS2, B_POLICE,  B_HOUSES   },
+    { B_HOUSES, B_FUEL,    B_APART,    B_BUS,    B_HOUSES,  B_SHOPS    },
+    { B_APART,  B_CRICKET, B_HOUSES,   B_HOSPITAL, B_HOUSES, B_APART   },
 };
+static const int BLOCKS = 2 * HALF_N;
 
 void TownScene::init(const GeometryManager& geo) {
     prims.clear();
@@ -324,8 +329,8 @@ void TownScene::init(const GeometryManager& geo) {
     seed = 20260923u;
     buildRoads();
     addPowerLines();
-    for (int bj = 0; bj < 4; ++bj)
-        for (int bi = 0; bi < 4; ++bi) buildBlock(bi, bj);
+    for (int bj = 0; bj < BLOCKS; ++bj)
+        for (int bi = 0; bi < BLOCKS; ++bi) buildBlock(bi, bj);
     buildOutskirts();
     buildBatches(geo);
 }
@@ -391,7 +396,7 @@ void TownScene::buildRoads() {
 }
 
 void TownScene::buildBlock(int bi, int bj) {
-    glm::vec3 c(coord(bi - 2) + GRID * 0.5f, 0.0f, coord(bj - 2) + GRID * 0.5f);
+    glm::vec3 c(coord(bi - HALF_N) + GRID * 0.5f, 0.0f, coord(bj - HALF_N) + GRID * 0.5f);
     // Footpath slab over the whole block (lots are built on top of it)
     float blockW = GRID - 2.0f * ROAD_HALF;
     addBox(c + glm::vec3(0, KERB_H * 0.5f, 0), { blockW, KERB_H, blockW }, mat({ 0.4f, 0.4f, 0.4f }, PAT_PAVEMENT, 0.15f, 16));
@@ -408,6 +413,10 @@ void TownScene::buildBlock(int bi, int bj) {
         case B_POLICE:  blockPolice(c); break;
         case B_BUS:     blockBusTerminal(c); break;
         case B_FUEL:    blockFuel(c); break;
+        case B_CRICKET: blockCricket(c); break;
+        case B_HOSPITAL: blockHospital(c); break;
+        case B_FACTORY: blockFactory(c); break;
+        case B_BAZAAR:  blockBazaar(c); break;
     }
 }
 
@@ -768,16 +777,147 @@ void TownScene::blockFuel(const glm::vec3& c) {
     addParkedCar(g + glm::vec3(0.0f, 0.04f, 3.0f), 0.0f, { 0.12f, 0.22f, 0.48f });
 }
 
-static const glm::vec3 POND(-128.0f, 0.0f, 118.0f);
+// Cricket ground: oval outfield, pitch with stumps, two stands, a scoreboard and four
+// floodlight towers (their lamps join the point-light pool, so night matches light up the area)
+void TownScene::blockCricket(const glm::vec3& c) {
+    glm::vec3 g = lotTop(c);
+    addBox(g + glm::vec3(0, 0.02f, 0), { 2 * LOT_HALF, 0.04f, 2 * LOT_HALF }, mat({ 0.2f, 0.4f, 0.1f }, PAT_GRASS, 0.05f, 4));
+    add(MESH_CYLINDER, glm::scale(glm::translate(glm::mat4(1.0f), g + glm::vec3(0, 0.05f, 0)), glm::vec3(19.0f, 0.04f, 21.0f)),
+        mat({ 0.2f, 0.45f, 0.1f }, PAT_GRASS, 0.05f, 4));
+    addBox(g + glm::vec3(0, 0.08f, 0), { 2.4f, 0.04f, 9.0f }, mat({ 0.70f, 0.58f, 0.38f }, PAT_NONE, 0.1f, 8));     // pitch
+    Mat white = mat({ 0.95f, 0.95f, 0.92f }, PAT_NONE, 0.3f, 16);
+    for (int e = -1; e <= 1; e += 2) {
+        addBox(g + glm::vec3(0, 0.1f, e * 3.6f), { 2.4f, 0.02f, 0.08f }, white);                                    // crease
+        for (int s = -1; s <= 1; ++s) addCyl(g + glm::vec3(s * 0.12f, 0.45f, e * 4.0f), 0.025f, 0.7f, white);        // stumps
+    }
+    Mat concrete = mat({ 0.6f, 0.6f, 0.58f }, PAT_CONCRETE);
+    static const glm::vec3 seatCols[3] = { { 0.0f, 0.45f, 0.30f }, { 0.85f, 0.12f, 0.15f }, { 0.9f, 0.9f, 0.9f } };
+    for (int s = -1; s <= 1; s += 2) {                                                              // stands, east and west
+        for (int t = 0; t < 4; ++t) {
+            float x = s * (8.6f + t * 0.9f);
+            addBox(g + glm::vec3(x, 0.35f + t * 0.7f, 0), { 0.9f, 0.7f + t * 1.4f, 18.0f }, concrete);
+            addBox(g + glm::vec3(x - s * 0.1f, 0.75f + t * 1.4f, 0), { 0.5f, 0.12f, 17.6f }, mat(seatCols[t % 3], PAT_NONE, 0.4f, 24));
+        }
+        addBox(g + glm::vec3(s * 10.6f, 6.6f, 0), { 4.4f, 0.15f, 18.6f }, mat({ 0.85f, 0.85f, 0.88f }, PAT_METAL, 0.5f, 32));   // roof
+    }
+    addBox(g + glm::vec3(0, 3.4f, -11.2f), { 6.0f, 3.0f, 0.3f }, mat({ 0.1f, 0.1f, 0.1f }, PAT_NONE, 0.4f, 32));             // scoreboard
+    addBox(g + glm::vec3(0, 3.6f, -11.0f), { 5.2f, 2.0f, 0.05f }, glow({ 0.1f, 0.4f, 0.1f }, { 0.2f, 0.9f, 0.3f }));
+    addBox(g + glm::vec3(-1.5f, 1.0f, -11.2f), { 0.3f, 2.0f, 0.3f }, concrete);
+    addBox(g + glm::vec3(1.5f, 1.0f, -11.2f), { 0.3f, 2.0f, 0.3f }, concrete);
+    Mat steel = mat({ 0.55f, 0.57f, 0.6f }, PAT_NONE, 0.5f, 32);
+    for (int sx = -1; sx <= 1; sx += 2)
+        for (int sz = -1; sz <= 1; sz += 2) {                                                       // floodlight towers
+            glm::vec3 b = g + glm::vec3(sx * 10.8f, 0, sz * 10.8f);
+            addCyl(b + glm::vec3(0, 9.0f, 0), 0.25f, 18.0f, steel);
+            glm::vec3 head = b + glm::vec3(0, 18.4f, 0) - glm::normalize(glm::vec3(sx, 0, sz)) * 0.4f;
+            addBox(head, { 2.4f, 1.6f, 0.4f }, steel, sx * sz > 0 ? 45.0f : -45.0f);
+            addBox(head - glm::normalize(glm::vec3(sx, 0, sz)) * 0.22f, { 2.1f, 1.3f, 0.06f },
+                   glow({ 1.0f, 1.0f, 0.95f }, { 1.6f, 1.6f, 1.5f }), sx * sz > 0 ? 45.0f : -45.0f);
+            lamps.push_back(head - glm::normalize(glm::vec3(sx, 0, sz)) * 2.0f - glm::vec3(0, 1.0f, 0));
+        }
+}
+
+// Hospital: L-shaped white block, red-cross signs, roof helipad, ambulance bay
+void TownScene::blockHospital(const glm::vec3& c) {
+    glm::vec3 g = lotTop(c);
+    addBox(g + glm::vec3(0, 0.02f, 0), { 2 * LOT_HALF, 0.04f, 2 * LOT_HALF }, mat({ 0.55f, 0.55f, 0.53f }, PAT_PLAZA));
+    Mat walls = facade({ 0.94f, 0.95f, 0.96f }, { 2.4f, 3.4f });
+    addBox(g + glm::vec3(-4.0f, 8.5f, -3.0f), { 14.0f, 17.0f, 12.0f }, walls);
+    addBox(g + glm::vec3(6.5f, 5.0f, -6.0f), { 8.0f, 10.0f, 10.0f }, walls);
+    Mat trim = mat({ 0.15f, 0.45f, 0.75f }, PAT_NONE, 0.4f, 32);
+    addBox(g + glm::vec3(-4.0f, 17.25f, -3.0f), { 14.4f, 0.5f, 12.4f }, trim);
+    addBox(g + glm::vec3(6.5f, 10.25f, -6.0f), { 8.4f, 0.5f, 10.4f }, trim);
+    // helipad
+    addCyl(g + glm::vec3(-4.0f, 17.6f, -3.0f), 4.5f, 0.15f, mat({ 0.25f, 0.27f, 0.3f }, PAT_CONCRETE));
+    Mat paint = mat({ 0.95f, 0.95f, 0.95f }, PAT_NONE, 0.2f, 8);
+    addBox(g + glm::vec3(-5.0f, 17.7f, -3.0f), { 0.4f, 0.04f, 3.0f }, paint);
+    addBox(g + glm::vec3(-3.0f, 17.7f, -3.0f), { 0.4f, 0.04f, 3.0f }, paint);
+    addBox(g + glm::vec3(-4.0f, 17.7f, -3.0f), { 2.0f, 0.04f, 0.4f }, paint);
+    // red crosses (glowing at night) on the facade and the roof edge
+    Mat red = glow({ 0.9f, 0.1f, 0.12f }, { 1.4f, 0.15f, 0.15f });
+    glm::vec3 cross = g + glm::vec3(-4.0f, 13.0f, 3.06f);
+    addBox(cross, { 3.0f, 0.9f, 0.1f }, red);
+    addBox(cross, { 0.9f, 3.0f, 0.1f }, red);
+    addBox(g + glm::vec3(-4.0f, 10.0f, 3.1f), { 7.0f, 1.0f, 0.1f }, glow({ 0.9f, 0.9f, 0.95f }, { 1.0f, 1.0f, 1.05f }));
+    // entrance canopy + ambulance
+    addBox(g + glm::vec3(-4.0f, 3.2f, 5.0f), { 8.0f, 0.25f, 4.0f }, mat({ 0.85f, 0.87f, 0.9f }, PAT_NONE, 0.5f, 32));
+    for (int s = -1; s <= 1; s += 2) addCyl(g + glm::vec3(-4.0f + s * 3.6f, 1.6f, 6.6f), 0.12f, 3.2f, mat({ 0.7f, 0.7f, 0.72f }));
+    addParkedCar(g + glm::vec3(5.0f, 0.04f, 6.0f), 90.0f, { 0.97f, 0.97f, 0.97f });
+    addBox(g + glm::vec3(5.0f, 0.72f, 6.0f), { 4.45f, 0.14f, 1.85f }, mat({ 0.9f, 0.1f, 0.1f }, PAT_NONE, 0.4f, 32));
+    addBox(g + glm::vec3(5.0f, 1.6f, 6.0f), { 0.35f, 0.14f, 1.0f }, glow({ 0.2f, 0.4f, 1.0f }, { 0.3f, 0.6f, 1.6f }, false));
+    for (int i = 0; i < 3; ++i) addTree(g + glm::vec3(-10.5f + i * 3.5f, 0, 10.5f), 0.55f, false);
+}
+
+// Factory: two saw-tooth-roof sheds, a banded brick chimney with a beacon, a water tower, containers
+void TownScene::blockFactory(const glm::vec3& c) {
+    glm::vec3 g = lotTop(c);
+    addBox(g + glm::vec3(0, 0.02f, 0), { 2 * LOT_HALF, 0.04f, 2 * LOT_HALF }, mat({ 0.33f, 0.33f, 0.34f }, PAT_CONCRETE));
+    Mat shed = mat({ 0.62f, 0.66f, 0.70f }, PAT_METAL, 0.4f, 24);
+    Mat roof = mat({ 0.45f, 0.48f, 0.52f }, PAT_METAL, 0.5f, 32);
+    for (int k = 0; k < 2; ++k) {
+        glm::vec3 b = g + glm::vec3(-6.0f + k * 10.5f, 0, -3.0f);
+        addBox(b + glm::vec3(0, 3.0f, 0), { 9.0f, 6.0f, 16.0f }, shed);
+        for (int t = 0; t < 5; ++t)                                                                 // saw-tooth roof
+            addRoof(b + glm::vec3(0, 6.75f, -6.4f + t * 3.2f), { 9.0f, 1.5f, 3.2f }, roof, 0.0f);
+        addBox(b + glm::vec3(0, 2.2f, 8.02f), { 4.0f, 4.4f, 0.06f }, mat({ 0.25f, 0.27f, 0.3f }, PAT_METAL, 0.3f, 16));   // roller door
+    }
+    Mat brick = mat({ 0.55f, 0.28f, 0.2f }, PAT_BRICK, 0.1f, 8);
+    glm::vec3 ch = g + glm::vec3(8.5f, 0, 8.0f);
+    addCyl(ch + glm::vec3(0, 11.0f, 0), 0.9f, 22.0f, brick);
+    for (int b = 0; b < 3; ++b)
+        addCyl(ch + glm::vec3(0, 18.5f + b * 1.2f, 0), 0.93f, 0.6f, mat(b % 2 ? glm::vec3(0.95f) : glm::vec3(0.85f, 0.1f, 0.1f), PAT_NONE, 0.3f, 16));
+    addSphere(ch + glm::vec3(0, 22.3f, 0), glm::vec3(0.35f), glow({ 1, 0.1f, 0.1f }, { 2.0f, 0.1f, 0.1f }, false));
+    Mat steel = mat({ 0.4f, 0.42f, 0.45f }, PAT_NONE, 0.5f, 32);
+    glm::vec3 wt = g + glm::vec3(-9.0f, 0, 8.5f);                                                   // water tower
+    for (int sx = -1; sx <= 1; sx += 2)
+        for (int sz = -1; sz <= 1; sz += 2) addRod(wt + glm::vec3(sx * 1.2f, 0, sz * 1.2f), wt + glm::vec3(sx * 0.8f, 8.0f, sz * 0.8f), 0.1f, steel);
+    addCyl(wt + glm::vec3(0, 9.2f, 0), 1.7f, 2.4f, mat({ 0.75f, 0.78f, 0.8f }, PAT_METAL, 0.5f, 32));
+    add(MESH_CONE, glm::scale(glm::translate(glm::mat4(1.0f), wt + glm::vec3(0, 10.9f, 0)), glm::vec3(3.6f, 1.0f, 3.6f)), steel);
+    static const glm::vec3 cols[4] = { { 0.12f, 0.33f, 0.55f }, { 0.72f, 0.26f, 0.12f }, { 0.18f, 0.42f, 0.22f }, { 0.85f, 0.65f, 0.1f } };
+    for (int i = 0; i < 4; ++i)
+        addBox(g + glm::vec3(-1.0f + (i % 2) * 2.6f, 1.3f + (i / 2) * 2.6f, 9.0f), { 2.44f, 2.6f, 6.1f }, mat(cols[i], PAT_METAL, 0.35f, 24));
+}
+
+// Open-air bazaar: rows of stalls under colourful tarps, goods on the tables
+void TownScene::blockBazaar(const glm::vec3& c) {
+    glm::vec3 g = lotTop(c);
+    addBox(g + glm::vec3(0, 0.02f, 0), { 2 * LOT_HALF, 0.04f, 2 * LOT_HALF }, mat({ 0.42f, 0.36f, 0.28f }, PAT_PLAZA));
+    static const glm::vec3 tarps[6] = { { 0.15f, 0.35f, 0.85f }, { 0.95f, 0.5f, 0.1f }, { 0.95f, 0.85f, 0.15f },
+                                        { 0.85f, 0.15f, 0.15f }, { 0.15f, 0.65f, 0.3f }, { 0.6f, 0.2f, 0.7f } };
+    static const glm::vec3 goods[5] = { { 0.95f, 0.55f, 0.1f }, { 0.85f, 0.1f, 0.1f }, { 0.2f, 0.6f, 0.15f },
+                                        { 0.95f, 0.85f, 0.2f }, { 0.6f, 0.35f, 0.2f } };
+    Mat wood = mat({ 0.45f, 0.3f, 0.17f }, PAT_NONE, 0.1f, 8);
+    for (int r = 0; r < 4; ++r)
+        for (int k = 0; k < 4; ++k) {
+            glm::vec3 p = g + glm::vec3(-9.0f + k * 6.0f, 0, -9.0f + r * 6.0f);
+            addBox(p + glm::vec3(0, 0.45f, 0), { 3.0f, 0.9f, 1.4f }, wood);
+            for (int sx = -1; sx <= 1; sx += 2)
+                for (int sz = -1; sz <= 1; sz += 2) addBox(p + glm::vec3(sx * 1.6f, 1.2f, sz * 0.9f), { 0.07f, 2.4f, 0.07f }, wood);
+            glm::mat4 t = glm::rotate(glm::translate(glm::mat4(1.0f), p + glm::vec3(0, 2.45f, 0.1f)), glm::radians(-8.0f), glm::vec3(1, 0, 0));
+            add(MESH_CUBE, glm::scale(t, glm::vec3(3.8f, 0.05f, 2.6f)), mat(tarps[(r * 4 + k) % 6], PAT_NONE, 0.2f, 8));
+            for (int i = 0; i < 6; ++i) {                                                           // heaps of fruit / vegetables
+                glm::vec3 q = p + glm::vec3(-1.1f + (i % 3) * 1.1f, 1.0f, -0.3f + (i / 3) * 0.6f);
+                addSphere(q, glm::vec3(0.7f, 0.35f, 0.5f), mat(goods[(r + k + i) % 5], PAT_FOLIAGE, 0.3f, 16));
+            }
+        }
+    for (int i = 0; i < 3; ++i) {                                                                   // string lights over the lanes
+        float x = -6.0f + i * 6.0f;
+        addRod(g + glm::vec3(x, 3.0f, -11.0f), g + glm::vec3(x, 3.0f, 11.0f), 0.02f, mat({ 0.1f, 0.1f, 0.1f }));
+        for (int b = 0; b < 8; ++b)
+            addSphere(g + glm::vec3(x, 2.9f, -10.0f + b * 2.85f), glm::vec3(0.16f), glow({ 1, 0.85f, 0.5f }, { 1.5f, 1.1f, 0.5f }));
+    }
+}
+
+static const glm::vec3 POND(-185.0f, 0.0f, 168.0f);
+static const glm::vec4 FIELDS[] = { { 178, 40, 40, 26 }, { 205, -48, 44, 30 }, { -175, -42, 44, 28 }, { 42, 178, 36, 40 },
+                                    { -40, -185, 30, 44 }, { 168, 172, 46, 30 } };
 
 void TownScene::buildOutskirts() {
     addPond(POND);
     // rice paddies beside the highways, separated by earth dikes
     Mat paddy = mat({ 0.3f, 0.5f, 0.15f }, PAT_PADDY, 0.4f, 32);
     Mat dike = mat({ 0.36f, 0.27f, 0.17f }, PAT_NONE, 0.05f, 4);
-    const glm::vec4 fields[] = { { 115, 30, 40, 26 }, { 160, -32, 50, 30 }, { -120, -30, 44, 28 }, { 30, 125, 36, 40 },
-                                 { -28, -130, 30, 44 }, { 120, 120, 46, 30 } };
-    for (const auto& f : fields) {
+    for (const auto& f : FIELDS) {
         glm::vec3 c(f.x, 0.0f, f.y);
         addBox(c + glm::vec3(0, 0.04f, 0), { f.z, 0.08f, f.w }, paddy);
         for (int s = -1; s <= 1; s += 2) {
@@ -788,15 +928,14 @@ void TownScene::buildOutskirts() {
     }
     // trees in a ring outside the town, kept off the highways
     int placed = 0, attempts = 0;
-    while (placed < 110 && attempts++ < 3000) {
+    while (placed < 140 && attempts++ < 4000) {
         float ang = rnd() * 6.2831853f;
-        float rad = 100.0f + rnd() * 130.0f;
+        float rad = 145.0f + rnd() * 120.0f;
         glm::vec3 p(std::cos(ang) * rad, 0, std::sin(ang) * rad);
         if (std::fabs(p.x) < 12.0f || std::fabs(p.z) < 12.0f) continue;
         if (glm::length((p - POND) * glm::vec3(1.0f, 0.0f, 1.5f)) < 26.0f) continue;   // keep the pond clear
         bool inField = false;
-        for (const glm::vec4 f : { glm::vec4(115, 30, 40, 26), glm::vec4(160, -32, 50, 30), glm::vec4(-120, -30, 44, 28),
-                                   glm::vec4(30, 125, 36, 40), glm::vec4(-28, -130, 30, 44), glm::vec4(120, 120, 46, 30) })
+        for (const glm::vec4& f : FIELDS)
             inField = inField || (std::fabs(p.x - f.x) < f.z * 0.5f + 2.0f && std::fabs(p.z - f.y) < f.w * 0.5f + 2.0f);
         if (inField) continue;
         if (rnd() < 0.35f) addPalm(p, 7.0f + 4.0f * rnd(), rnd() * 360.0f);
@@ -806,7 +945,7 @@ void TownScene::buildOutskirts() {
     // village houses with tin roofs
     for (int i = 0; i < 14; ++i) {
         float ang = rnd() * 6.2831853f;
-        float rad = 110.0f + rnd() * 70.0f;
+        float rad = 150.0f + rnd() * 70.0f;
         glm::vec3 p(std::cos(ang) * rad, 0, std::sin(ang) * rad);
         if (std::fabs(p.x) < 15.0f || std::fabs(p.z) < 15.0f) continue;
         float yaw = rnd() * 90.0f;

@@ -11,14 +11,14 @@
 class TrafficSystem;
 
 // ---------------------------------------------------------------------------
-// Street grid. Road centre lines run along x and z at -80, -40, 0, 40, 80
-// (junction index -2..2). The shader (scene.frag) uses the same numbers to
+// Street grid. Road centre lines run along x and z at -120, -80, ..., 120
+// (junction index -3..3). The shader (scene.frag) uses the same numbers to
 // paint lanes, zebra crossings and stop lines from world position.
 // ---------------------------------------------------------------------------
 namespace Town {
     constexpr float GRID      = 40.0f;   // block pitch (road centre to road centre)
-    constexpr int   HALF_N    = 2;       // junction indices -2..2
-    constexpr float EDGE      = 80.0f;   // outermost road centre line
+    constexpr int   HALF_N    = 3;       // junction indices -3..3 (7 x 7 roads, 6 x 6 blocks)
+    constexpr float EDGE      = 120.0f;  // outermost road centre line
     constexpr float ROAD_HALF = 4.5f;    // carriageway half width (two lanes)
     constexpr float LANE      = 2.0f;    // lane centre offset (traffic keeps LEFT, as in Bangladesh)
     constexpr float WALK      = 6.2f;    // pedestrian path offset from the road centre (on the footpath)
@@ -70,6 +70,7 @@ public:
     void box(const glm::mat4& parent, const glm::vec3& center, const glm::vec3& size);
     void cyl(const glm::mat4& parent, const glm::vec3& center, float radius, float height);
     void sphere(const glm::mat4& parent, const glm::vec3& center, const glm::vec3& size);
+    bool shadowPass() const { return shadow; }
 
 private:
     const Shader& sh;
@@ -142,6 +143,10 @@ private:
     void blockPolice(const glm::vec3& c);
     void blockBusTerminal(const glm::vec3& c);
     void blockFuel(const glm::vec3& c);
+    void blockCricket(const glm::vec3& c);
+    void blockHospital(const glm::vec3& c);
+    void blockFactory(const glm::vec3& c);
+    void blockBazaar(const glm::vec3& c);
 
     // Moving / animated parts (drawn every frame)
     void renderSignals(Painter& p, const TrafficSystem& traffic) const;

@@ -319,8 +319,10 @@ void TownScene::renderVehicles(Painter& p, const TrafficSystem& traffic, float t
 }
 
 void TownScene::renderPedestrians(Painter& p, const TrafficSystem& traffic) const {
+    // people further than 60 m cast shadows too small to see: skip them in the shadow pass
+    const float maxDist = p.shadowPass() ? 60.0f : 120.0f;
     for (const Pedestrian& q : traffic.pedestrians) {
-        if (glm::length(q.pos - cullCenter) > 120.0f) continue;
+        if (glm::length(q.pos - cullCenter) > maxDist) continue;
         glm::mat4 root = glm::rotate(glm::translate(glm::mat4(1.0f), q.pos), glm::radians(q.yawDeg), Y_AXIS);
         float amp = glm::clamp(q.speed / 1.2f, 0.0f, 1.0f);       // walk cycle fades out when standing
         float sw = std::sin(q.phase) * 0.45f * amp;

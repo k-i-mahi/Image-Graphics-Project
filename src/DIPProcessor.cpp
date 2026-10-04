@@ -18,7 +18,7 @@ DIPProcessor::DIPProcessor()
       dofFocalDepth(22.0f),
       dofAlpha(0.32f),
       nearPlane(0.1f),
-      farPlane(400.0f),
+      farPlane(700.0f),
       splitPosition(0.5f),
       stageFBO{ 0, 0 }, stageTex{ 0, 0 }, lutTex(0), cur(0), historyValid(false), stageW(0), stageH(0) {
     for (int i = 0; i < 256; ++i) lut[i] = static_cast<uint8_t>(i);
