@@ -58,13 +58,13 @@ the live CCTV feed.
 
 | | |
 |---|---|
-| **Procedural town** | 5 × 5 street grid and 16 themed city blocks. Lane markings and zebra crossings are painted in the fragment shader from world position, with no textures or models. |
+| **Procedural town** | 5 × 5 street grid, 16 themed city blocks, coconut palms, electricity poles with sagging cables, glowing rooftop billboards, tea stalls, rice paddies and a village pond. Road markings are painted in the fragment shader; there are no textures or models. |
 | **Traffic simulation** | 49 vehicles of 8 types on lane routes with **cubic Bézier** turns. Heading comes from `P'(t)`; vehicles obey signals, keep their distance, and stop for people. |
 | **Hierarchical people** | About 85 pedestrians with articulated skeletons and walk cycles. They wait at kerbs and cross on green. |
-| **Rendering** | HDR + ACES, camera-following shadow map with texel snapping, 4× MSAA, **bloom from an emissive glow mask**, procedural sky, day/night cycle, Flat / Gouraud / Phong shading. |
+| **Rendering** | HDR + ACES, camera-following shadow map with texel snapping, 4× MSAA, **bloom from an emissive glow mask**, **Fresnel sky reflections** on glass, water and paint, procedural sky, day/night cycle, Flat / Gouraud / Phong shading. The static town is batched by material into a few hundred draw calls. |
 | **CCTV restoration** | Bilateral, median, or kernel denoising, plus **motion-adaptive temporal noise reduction** and **real histogram equalization** driven by a GPU → CPU histogram every frame. |
 | **Motion detection** | Background subtraction, thresholding, morphological opening, and connected-component labelling give bounding boxes around moving objects. The intermediate images are shown live. |
-| **Image Operation Lab** | Editable 3×3 / 5×5 kernels, median / min / max, histogram equalization, noise injection, and **PSNR**, visualised pixel by pixel. |
+| **Image Operation Lab** | Editable 3×3 / 5×5 kernels, median / min / max, histogram equalization, **Otsu segmentation**, **frequency-domain filtering (2D DFT)**, noise injection, and **PSNR**, visualised pixel by pixel in a themed interface with real TrueType text. |
 | **Measured** | A per-stage GPU timing panel (timer queries) and a unit-tested image-processing library, built by **CI** on every push. |
 
 The town carries a local flavour: left-hand traffic, CNG auto-rickshaws, pedalling cycle-rickshaw
@@ -77,19 +77,23 @@ the difference $|I-B|$, and the cleaned mask.
 
 ![Motion detection](docs/screenshots/cctv_motion_detection.png)
 
-| Night: bloom on lamps, windows and neon | Night CCTV: degraded (left) vs. restored (right) |
+| Street level: palms, power lines, reflections | Night: bloom on lamps, windows, neon and billboards |
 |---|---|
-| ![Bloom](docs/screenshots/night_bloom.png) | ![Split](docs/screenshots/dip_split_screen.png) |
-| **Town at night** | **Street level** |
-| ![Night](docs/screenshots/town_night.png) | ![Street](docs/screenshots/street_level.png) |
+| ![Street](docs/screenshots/street_level.png) | ![Bloom](docs/screenshots/night_bloom.png) |
+| **Village pond, palms and boats** | **Town park and junctions** |
+| ![Pond](docs/screenshots/village_pond.png) | ![Park](docs/screenshots/town_park.png) |
+| **Town at night** | **Night CCTV: degraded (left) vs. restored (right)** |
+| ![Night](docs/screenshots/town_night.png) | ![Split](docs/screenshots/dip_split_screen.png) |
 
 **Image Operation Lab — convolution.** The kernel window in the original (yellow beam) produces the
 output pixel in the processed image (cyan beam). The arithmetic is shown underneath.
 
 ![Lab convolution](docs/screenshots/lab_convolution.png)
 
-| Median filter on salt-and-pepper noise (PSNR 16.1 → 22.9 dB) | Histogram equalization (histogram, CDF, per-pixel mapping) |
+| Frequency domain: centred spectrum, cut-off D0, H(D) curve | Otsu segmentation: histogram, σB²(t), threshold t* |
 |---|---|
+| ![DFT](docs/screenshots/lab_frequency.png) | ![Otsu](docs/screenshots/lab_otsu.png) |
+| **Median filter on salt-and-pepper noise (PSNR 16.1 → 22.9 dB)** | **Histogram equalization (histogram, CDF, per-pixel mapping)** |
 | ![Median](docs/screenshots/lab_median.png) | ![HistEq](docs/screenshots/lab_histeq.png) |
 | **Depth of field from the depth buffer** | **Performance panel (GPU time per stage)** |
 | ![DoF](docs/screenshots/dip_depth_of_field.png) | ![Perf](docs/screenshots/performance_panel.png) |
@@ -167,6 +171,8 @@ is screen-blended: $c' = 1 - (1-c)(1-b)$.
 | Bilateral filter | $w = e^{-\lvert q-p\rvert^2/2\sigma_s^2}\, e^{-\lvert I_q - I_p\rvert^2/2\sigma_r^2}$ — smooths noise and keeps edges | live |
 | Temporal noise reduction | $o_t = o_{t-1} + a\,(c_t - o_{t-1})$ with $a = 0.2$ on static pixels and $1$ on moving ones | live |
 | Histogram equalization | $\text{out} = \operatorname{round}\big(255\,\frac{\text{cdf}(v) - \text{cdf}_{\min}}{N - \text{cdf}_{\min}}\big)$ on luminance; colour scaled by $Y'/Y$ | live, lab |
+| Otsu thresholding | $t^* = \arg\max_t \sigma_B^2(t)$, $\sigma_B^2 = \omega_0\omega_1(\mu_0-\mu_1)^2$ | lab |
+| Frequency-domain filtering | $F = \text{DFT}(f)$ (separable), $G = H\cdot F$, $g = \text{IDFT}(G)$; ideal / Gaussian low- and high-pass $H(D)$ | lab |
 | Motion detection | $B \mathrel{+}= a(I-B)$, $M = \lvert I-B\rvert > T$, opening, 8-connected labelling (union-find) | live |
 | Quality metric | $\text{PSNR} = 10 \log_{10}(255^2 / \text{MSE})$ against the noise-free image | lab |
 | Depth of field | Blur radius $R(x,y) = \alpha\,\lvert Z(x,y) - Z_{\text{focus}}\rvert$ from the linearised depth buffer | live |
@@ -184,9 +190,14 @@ is screen-blended: $c' = 1 - (1-c)(1-b)$.
 - **`ImageOps`** — every image algorithm (convolution, rank filters, equalization, noise, PSNR,
   morphology, connected components) is plain C++ with no OpenGL. The lab and the motion detector call
   it, so the numbers on screen are the tested numbers.
-- **Unit tests** (`tests/test_imageops.cpp`, run by `ctest`): hand-computed convolutions, Sobel
-  clamping, emboss offset, median removing impulses, equalization edge cases, PSNR, noise statistics,
-  morphology, and component labelling of U-shapes and diagonals.
+- **Unit tests** (`tests/test_imageops.cpp`, run by `ctest`, 50 checks): hand-computed convolutions,
+  Sobel clamping, emboss offset, median removing impulses, equalization edge cases, Otsu's σB² on a
+  bimodal image, the DFT → IDFT round trip, PSNR, noise statistics, morphology, and component labelling
+  of U-shapes and diagonals.
+- **Static batching:** at startup, every static primitive sharing a material is pre-transformed into one
+  vertex buffer. The whole town draws in a few hundred calls, which keeps 60 FPS with the extra detail.
+- **UI:** the overlay renders TrueType fonts (Segoe UI and Consolas, rasterised once into an atlas with
+  `stb_truetype`), rounded panels with soft shadows, and gradients, all in a single draw call.
 - **CI** (`.github/workflows/build.yml`): on every push, GitHub Actions builds with MinGW-w64 GCC,
   runs the tests, and publishes a downloadable Windows build.
 - **Measured performance:** GPU timer queries per stage, read one frame late so the CPU never stalls.
@@ -249,7 +260,7 @@ NightWatch.exe --shot lab.bmp --camera cctv --lab --labkeys "OII^^"
 - **Kernel:** click a cell and type a value (`Enter`, `Tab`); the mouse wheel adds or subtracts 1. `U` sends the kernel to the live CCTV views.
 - **Pixels:** click any pixel to inspect it, or move the inspected pixel with `WASD`.
 - **Playback:** `Space` play/pause, `←` / `→` single step, `↑` / `↓` speed.
-- **Options:** `O` operation, `P` preset, `Z` 3×3 / 5×5, `G` grey, `I` noise.
+- **Options:** `O` operation, `P` preset, `Z` 3×3 / 5×5, `G` grey, `I` noise, `F` frequency filter type, `[` `]` cut-off D0.
 - **Exit:** `Esc`.
 
 ## Project structure
@@ -290,7 +301,7 @@ Science and Engineering, **Khulna University of Engineering & Technology (KUET)*
 **Author:** Khadimul Islam Mahi · Roll 2107076 · [@k-i-mahi](https://github.com/k-i-mahi)
 
 Third-party: [GLFW](https://www.glfw.org/) (zlib), [GLAD](https://glad.dav1d.de/), [GLM](https://github.com/g-truc/glm) (MIT),
-[stb_easy_font](https://github.com/nothings/stb) (public domain).
+[stb_truetype and stb_easy_font](https://github.com/nothings/stb) (public domain).
 
 ## License
 

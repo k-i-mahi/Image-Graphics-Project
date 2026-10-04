@@ -66,6 +66,25 @@ std::array<uint8_t, 256> equalizationLUT(const Histogram& h);
 // Equalizes luminance and scales RGB by Y'/Y so colours keep their hue
 void equalize(const Image& in, Image& out, Histogram* histOut = nullptr);
 
+// ---- Otsu thresholding (segmentation) ------------------------------------
+// Chooses t maximising the between-class variance  sigma_B^2(t) = w0 w1 (mu0 - mu1)^2
+// (class 0 = values <= t). sigmaB, if given, receives sigma_B^2 for every t.
+int otsuThreshold(const Histogram& h, std::array<double, 256>* sigmaB = nullptr);
+void threshold(const Image& in, int t, Image& out);      // luminance > t -> 255 else 0
+
+// ---- frequency domain ----------------------------------------------------------
+// 2D DFT  F(u,v) = sum_x sum_y f(x,y) e^{-j 2 pi (u x / M + v y / N)}, computed
+// separably (rows, then columns). The filter H(u,v) uses the distance D from the
+// centre of the (shifted) spectrum, in frequency samples.
+enum class FreqFilter { IdealLow, GaussianLow, IdealHigh, GaussianHigh };
+float filterResponse(FreqFilter type, float D, float cutoff);
+struct FreqResult {
+    std::vector<float> logMagnitude;   // w * h, centred, normalised 0..1 (luminance spectrum)
+    std::vector<float> response;       // w * h, H(u,v) centred
+};
+// Applies H to each colour channel (or the grey channel). High-pass results get +128 so negatives show.
+void frequencyFilter(const Image& in, FreqFilter type, float cutoff, Image& out, bool grey, FreqResult* info = nullptr);
+
 // ---- noise and quality ------------------------------------------------------
 void addGaussianNoise(Image& img, double sigma, uint32_t seed, bool grey);    // Box-Muller
 void addSaltPepper(Image& img, double probability, uint32_t seed);

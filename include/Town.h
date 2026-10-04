@@ -1,6 +1,7 @@
 #pragma once
 
 #include <glm/glm.hpp>
+#include <memory>
 #include <vector>
 #include "Geometry.h"
 #include "Shader.h"
@@ -53,7 +54,7 @@ struct Mat {
 enum SurfacePattern {
     PAT_NONE = 0, PAT_GROUND = 1, PAT_CONCRETE = 2, PAT_BRICK = 3, PAT_METAL = 4, PAT_FACADE = 5,
     PAT_FOLIAGE = 6, PAT_BARK = 7, PAT_ROAD = 8, PAT_PAVEMENT = 9, PAT_GRASS = 10, PAT_PLAZA = 11,
-    PAT_WATER = 12, PAT_ROOFTILE = 13, PAT_GLASS = 14
+    PAT_WATER = 12, PAT_ROOFTILE = 13, PAT_GLASS = 14, PAT_PADDY = 15
 };
 
 enum MeshKind { MESH_CUBE, MESH_CYLINDER, MESH_SPHERE, MESH_PRISM, MESH_CONE };
@@ -88,15 +89,23 @@ public:
     float lampGlow = 1.0f;
     glm::vec3 cullCenter{ 0.0f };   // people / vehicles far from here are skipped (lost in fog anyway)
 
-    void init();
+    void init(const GeometryManager& geo);
     void render(const Shader& shader, const GeometryManager& geo, const CCTVKinematicChain& cctv,
                 const TrafficSystem& traffic, float time, bool shadowPass) const;
 
     const std::vector<glm::vec3>& lampPositions() const { return lamps; }
+    size_t primitiveCount() const { return staticPrimCount; }
+    size_t batchCount() const { return batches.size(); }
 
 private:
     struct Prim { MeshKind mesh; glm::mat4 model; Mat mat; };
-    std::vector<Prim> prims;          // static scene
+    std::vector<Prim> prims;          // static scene, before batching
+    // Static batching: every primitive sharing a material is merged into one
+    // pre-transformed mesh, so the whole static town is a few hundred draws.
+    std::vector<std::unique_ptr<Mesh>> batches;
+    std::vector<Mat> batchMats;
+    size_t staticPrimCount = 0;
+    void buildBatches(const GeometryManager& geo);
     std::vector<glm::vec3> lamps;     // street lamp bulb positions (point lights)
     unsigned int seed = 20260923u;
 
@@ -110,6 +119,13 @@ private:
     void addLamp(const glm::vec3& base, const glm::vec3& towardRoad);
     void addBench(const glm::vec3& p, float yawDeg);
     void addParkedCar(const glm::vec3& p, float yawDeg, const glm::vec3& color);
+    void addBeam(const glm::vec3& a, const glm::vec3& b, float width, float thick, const Mat& mat);  // box from a to b
+    void addRod(const glm::vec3& a, const glm::vec3& b, float radius, const Mat& mat);               // cylinder from a to b
+    void addPalm(const glm::vec3& p, float height, float leanDeg);
+    void addPowerLines();
+    void addBillboard(const glm::vec3& base, float yawDeg, int design);
+    void addTeaStall(const glm::vec3& p, float yawDeg);
+    void addPond(const glm::vec3& c);
 
     void buildRoads();
     void buildBlock(int bi, int bj);

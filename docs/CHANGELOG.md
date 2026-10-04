@@ -4,6 +4,17 @@ Tracks what has been built, fixed and added. Newest entries at the top.
 
 ---
 
+## 2026-10-05 (part 3) — Version 4: visuals and content
+
+- [x] **UI**: TrueType fonts (Segoe UI, Consolas) via `stb_truetype` font atlas with mipmaps; UTF-8 text (Σ × ÷ → σ ∞);
+  rounded panels, soft shadows, gradients — still one draw call per batch. Lab, HUD and performance panel all benefit.
+- [x] **Lab redesign**: themed cards, pill chips, PSNR scorecard, scan progress bar, monospaced numbers, maths symbols.
+- [x] **Lab content**: Otsu thresholding (σB² curve, t*) and frequency-domain filtering (separable 2D DFT, ideal/Gaussian
+  low/high-pass, spectrum with pass band and cut-off ring, H(D) plot). 11 new unit-test checks (50 total).
+- [x] **Rendering**: Fresnel sky reflections; static batching per material (draw calls 6,693 → ~4,400 with more content).
+- [x] **Content**: coconut palms, electricity poles with sagging cables and transformers, rooftop billboards, AC units,
+  solar panels, tea stall, rice paddies, village pond with boats.
+
 ## 2026-10-05 (part 2) — Version 3: restoration, analytics, measurement, engineering
 
 - [x] **ImageOps library** (`src/ImageOps.cpp`): convolution, rank filters, histogram equalization, noise, PSNR,

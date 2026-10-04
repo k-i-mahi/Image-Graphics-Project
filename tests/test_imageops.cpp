@@ -1,6 +1,7 @@
 // Unit tests for ImageOps (no framework needed: run the executable or `ctest`).
 #include "ImageOps.h"
 #include <cmath>
+#include <array>
 #include <cstdio>
 #include <functional>
 #include <string>
@@ -192,6 +193,41 @@ static void testMorphologyAndComponents() {
     CHECK(ub.size() == 1 && ub[0].area == 11);
 }
 
+static void testOtsu() {
+    // bimodal: half the pixels at 40, half at 200 -> threshold separates them
+    Image img(10, 10);
+    for (int y = 0; y < 10; ++y)
+        for (int x = 0; x < 10; ++x) { int v = x < 5 ? 40 : 200; img.set(x, y, v, v, v); }
+    std::array<double, 256> sb{};
+    int t = otsuThreshold(lumaHistogram(img), &sb);
+    CHECK(t >= 40 && t < 200);
+    CHECK(sb[t] > 0.0 && sb[t] >= sb[10] && sb[t] >= sb[220]);
+    // sigma_B^2 at the optimum: w0 = w1 = 0.5, (mu0 - mu1)^2 = 160^2  ->  0.25 * 25600 = 6400
+    CHECK(std::fabs(sb[t] - 6400.0) < 1e-6);
+    Image out;
+    threshold(img, t, out);
+    CHECK(out.at(2, 2, 0) == 0 && out.at(8, 8, 0) == 255);
+}
+
+static void testFrequencyFilter() {
+    Image in = ramp(12, 8), out;
+    FreqResult info;
+    frequencyFilter(in, FreqFilter::IdealLow, 1000.0f, out, true, &info);    // passes everything
+    bool same = true;
+    for (int y = 0; y < in.h; ++y)
+        for (int x = 0; x < in.w; ++x) same = same && std::abs(out.at(x, y, 0) - in.at(x, y, 0)) <= 1;
+    CHECK(same);                                                            // DFT -> IDFT round trip
+    CHECK(info.logMagnitude.size() == 96 && info.response.size() == 96);
+    CHECK(info.logMagnitude[4 * 12 + 6] == 1.0f);                           // DC term is the strongest, at the centre
+    Image flat(8, 8, 90);
+    frequencyFilter(flat, FreqFilter::GaussianLow, 1.5f, out, true);
+    CHECK(out.at(3, 3, 0) == 90);                                           // low-pass keeps a constant image
+    frequencyFilter(flat, FreqFilter::IdealHigh, 0.5f, out, true);
+    CHECK(out.at(3, 3, 0) == 128);                                          // high-pass removes it (+128 offset)
+    CHECK(filterResponse(FreqFilter::GaussianLow, 0.0f, 5.0f) == 1.0f);
+    CHECK(std::fabs(filterResponse(FreqFilter::GaussianHigh, 5.0f, 5.0f) - (1.0f - std::exp(-0.5f))) < 1e-6f);
+}
+
 int main() {
     const std::vector<std::pair<std::string, std::function<void()>>> tests = {
         { "clamp-to-edge", testClampToEdge },
@@ -207,6 +243,8 @@ int main() {
         { "PSNR / MSE", testPsnr },
         { "noise generators", testNoiseIsDeterministicAndBounded },
         { "morphology + connected components", testMorphologyAndComponents },
+        { "Otsu thresholding", testOtsu },
+        { "frequency-domain filtering (DFT)", testFrequencyFilter },
     };
     for (const auto& t : tests) {
         int before = failures;

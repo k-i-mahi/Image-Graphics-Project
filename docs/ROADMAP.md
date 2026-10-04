@@ -101,6 +101,17 @@ One screen, three columns:
 | 6 | Algorithms lived inside UI code; no tests, no CI | `ImageOps` library, 39 unit-test checks, GitHub Actions build + test + artifact |
 | 7 | Mipmap read-back of an FBO attachment returned zeros after the first frame on this driver | Replaced by a blit-downscale + `glReadPixels` (`Downsampler`) |
 
+## 2c. Design review of version 3 (visuals and content)
+
+| # | Problem | Fix (version 4) |
+|---|---|---|
+| 1 | Pixel-font UI made the lab look like a debug tool | TrueType atlas (stb_truetype), rounded cards, shadows, colour-coded sections, PSNR scorecard |
+| 2 | Lab stopped at spatial filters | Otsu segmentation and frequency-domain filtering (2D DFT, ideal/Gaussian LP/HP) with spectrum view |
+| 3 | Glass, water and paint looked matte | Fresnel sky reflections |
+| 4 | Trees were green balls; streets empty | Coconut palms, power poles with sagging cables, billboards, AC units, solar panels, tea stall |
+| 5 | Outskirts were a flat green plane | Rice paddies with dikes, village pond with boats |
+| 6 | 6,700 draw calls left no room for detail | Static batching per material |
+
 ## 3. Order of work
 
 1. [x] **Town world + traffic + people** (Part A) — done 2026-10-05
@@ -109,4 +120,5 @@ One screen, three columns:
 4. [x] Real histogram equalization in the live CCTV pipeline (view 4) — done (v3)
 5. [x] Motion detection, timestamp/camera-ID HUD, per-stage timing panel — done (v3)
 6. [x] Bloom, bilateral + temporal denoising, unit tests, CI — done (v3)
-7. [ ] Ideas: frequency-domain filtering (DFT) in the lab, CLAHE, detection accuracy vs. simulator ground truth
+7. [x] Frequency-domain filtering + Otsu in the lab, TrueType UI, reflections, street detail — done (v4)
+8. [ ] Ideas: CLAHE, detection accuracy vs. simulator ground truth, screen-space ambient occlusion, rain

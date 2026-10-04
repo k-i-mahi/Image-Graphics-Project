@@ -28,6 +28,7 @@ uniform bool uShadowsEnabled;
 uniform float uExposure;
 uniform float uNight;       // 0 = day, 1 = night (lit windows)
 uniform vec3 uFogColor;     // display-space, equals the sky horizon colour
+uniform vec3 uSkyZenith;    // display-space sky colour overhead (for reflections)
 uniform float uFogDensity;
 
 #include "common.glsl"
@@ -51,6 +52,7 @@ uniform float uFogDensity;
 #define PAT_WATER     12  // animated ripples
 #define PAT_ROOFTILE  13  // clay roof tiles
 #define PAT_GLASS     14  // curtain-wall office tower
+#define PAT_PADDY     15  // rice field: planted rows with water between them
 
 uniform vec2 uFacadeCell;  // window grid cell (metres) for PAT_FACADE
 
@@ -176,6 +178,14 @@ void applyPattern(vec3 P, inout vec3 N, inout vec3 albedo, inout vec3 emissive, 
         albedo = vec3(0.02, 0.07, 0.10);
         specScale = 5.0;
     }
+    else if (uMatPattern == PAT_PADDY) {
+        float row = abs(fract(P.z / 0.7) - 0.5) * 2.0;                  // 0 at a row of plants, 1 between rows
+        float plants = smoothstep(0.92, 0.45, row) * (0.75 + 0.25 * vnoise(P.xz * 6.0));
+        vec3 rice = mix(vec3(0.10, 0.24, 0.04), vec3(0.24, 0.34, 0.06), fbm(P.xz * 0.15));
+        vec3 water = vec3(0.04, 0.07, 0.07);
+        albedo = mix(water, rice, plants);
+        specScale = mix(1.6, 0.2, plants);                              // the water between the rows glints
+    }
     else if (uMatPattern == PAT_ROOFTILE) {
         float row = floor(P.y / 0.28);
         float col = floor((P.x + P.z + mod(row, 2.0) * 0.15) / 0.3);
@@ -280,6 +290,9 @@ float shadowFactor(vec3 P, vec3 N) {
     return lit / 25.0;
 }
 
+// reflections are a little weaker in shadow (the sky is partly blocked)
+float shadowSoft(float s) { return 0.6 + 0.4 * s; }
+
 // ACES filmic tone curve (Narkowicz fit)
 vec3 aces(vec3 x) {
     return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
@@ -311,6 +324,22 @@ void main() {
         color = albedo * (hemisphereAmbient(N) + locDiff + sunDiff * shadow) + specColor * (locSpec + sunSpec * shadow);
     }
     color += emissive;
+
+    // Sky reflection (Schlick Fresnel): glass, water, windows and glossy paint mirror the sky gradient.
+    //   F = F0 + (1 - F0) (1 - N.V)^5
+    float reflectivity = 0.0;
+    if (uMatPattern == PAT_WATER) reflectivity = 0.9;
+    else if (uMatPattern == PAT_PADDY) reflectivity = 0.10 * (1.0 - smoothstep(0.05, 0.15, albedo.g));
+    else if (uMatPattern == PAT_GLASS) reflectivity = specScale > 4.0 ? 0.75 : 0.15;
+    else if (uMatPattern == PAT_FACADE && specScale > 3.0) reflectivity = 0.45;     // window panes
+    else if (uMatPattern == PAT_NONE && uMatShininess >= 64.0) reflectivity = 0.22;  // car paint, polished metal
+    if (reflectivity > 0.0 && uShadingModel != 2) {
+        vec3 R = reflect(-V, N);
+        vec3 sky = R.y > 0.0 ? mix(uFogColor, uSkyZenith, pow(R.y, 0.45))
+                             : mix(uFogColor, uFogColor * 0.25, clamp(-R.y * 4.0, 0.0, 1.0));   // below the horizon: ground-ish
+        float F = 0.04 + 0.96 * pow(1.0 - max(dot(N, V), 0.0), 5.0);
+        color += pow(sky, vec3(2.2)) / uExposure * mix(F, 1.0, 0.25) * reflectivity * shadowSoft(shadow);
+    }
 
     // HDR -> display: exposure, filmic tone map, gamma
     color = aces(color * uExposure);

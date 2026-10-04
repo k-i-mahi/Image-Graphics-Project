@@ -2,6 +2,7 @@
 
 #include <glad/glad.h>
 #include <glm/glm.hpp>
+#include <array>
 #include <string>
 #include <vector>
 #include "Overlay2D.h"
@@ -22,7 +23,7 @@
 // original and at the output pixel in the processed image.
 // ---------------------------------------------------------------------------
 
-enum LabOp { OP_CONVOLVE = 0, OP_MEDIAN, OP_MIN, OP_MAX, OP_HISTEQ, OP_COUNT };
+enum LabOp { OP_CONVOLVE = 0, OP_MEDIAN, OP_MIN, OP_MAX, OP_HISTEQ, OP_OTSU, OP_FREQ, OP_COUNT };
 enum LabNoise { NOISE_NONE = 0, NOISE_GAUSSIAN, NOISE_SALT_PEPPER, NOISE_COUNT };
 
 struct LabKernel : imgops::Kernel {
@@ -73,7 +74,13 @@ private:
     bool dirty = true;                             // output must be recomputed
     bool inputDirty = true;                        // input must be rebuilt from the snapshot
     double psnrIn = 0.0, psnrOut = 0.0;
-    imgops::Histogram hist;                        // luminance histogram (histogram equalization)
+    imgops::Histogram hist;                        // luminance histogram (equalization, Otsu)
+    std::array<double, 256> sigmaB{};              // Otsu: between-class variance for every threshold
+    int otsuT = 128;
+    imgops::FreqFilter freqType = imgops::FreqFilter::GaussianLow;
+    float freqCutoff = 6.0f;                       // in frequency samples
+    imgops::FreqResult freq;                       // spectrum + H(u,v) for display
+    GLuint texSpec = 0;
 
     // ---- scan / focus ----
     int reveal = 0;                                // output pixels shown so far
@@ -106,5 +113,7 @@ private:
     void windowValues(int x, int y, int c, std::vector<int>& vals) const;
 
     bool button(Overlay2D& ui, float x, float y, float w, float h, const std::string& label, bool on, float ts);
-    void drawImage(const GeometryManager& geo, GLuint tex, float x, float y, float w, float h, int W, int H, int revealCount);
+    void drawImage(const GeometryManager& geo, GLuint tex, float x, float y, float w, float h, int W, int H, int revealCount,
+                   int texW = -1, int texH = -1);
+    void uploadSpectrum();
 };

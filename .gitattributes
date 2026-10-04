@@ -10,3 +10,4 @@
 include/glm/** linguist-vendored
 include/stb_easy_font.h linguist-vendored
 extern/** linguist-vendored
+include/stb_truetype.h linguist-vendored

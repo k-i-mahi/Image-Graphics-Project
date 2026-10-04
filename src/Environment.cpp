@@ -168,6 +168,7 @@ void Environment::applyToSceneShader(const Shader& s) const {
     s.setFloat("uExposure", exposure);
     s.setFloat("uNight", 1.0f - dayFactor);
     s.setVec3("uFogColor", horizon);
+    s.setVec3("uSkyZenith", zenith);
     s.setFloat("uFogDensity", fogDensity);
 }
 

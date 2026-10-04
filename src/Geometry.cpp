@@ -61,6 +61,16 @@ void Mesh::draw() const {
 
 GeometryManager::GeometryManager() {}
 
+// Keeps an indexed CPU copy of a unit mesh (for static batching)
+void GeometryManager::keepCpu(int kind, const std::vector<Vertex>& v, const std::vector<unsigned int>& idx) {
+    cpu[kind].vertices = v;
+    cpu[kind].indices = idx;
+    if (idx.empty()) {
+        cpu[kind].indices.resize(v.size());
+        for (size_t i = 0; i < v.size(); ++i) cpu[kind].indices[i] = static_cast<unsigned int>(i);
+    }
+}
+
 GeometryManager::~GeometryManager() {}
 
 void GeometryManager::init() {
@@ -143,6 +153,7 @@ void GeometryManager::generateCube() {
         vList.push_back(v);
     }
     cubeMesh.setupMesh(vList);
+    keepCpu(0, vList, {});
 }
 
 void GeometryManager::generateCylinder(int sectors) {
@@ -244,6 +255,7 @@ void GeometryManager::generateCylinder(int sectors) {
     }
 
     cylinderMesh.setupMesh(vertices, indices);
+    keepCpu(1, vertices, indices);
 }
 
 void GeometryManager::generateSphere(int rings, int sectors) {
@@ -285,6 +297,7 @@ void GeometryManager::generateSphere(int rings, int sectors) {
     }
 
     sphereMesh.setupMesh(vertices, indices);
+    keepCpu(2, vertices, indices);
 }
 
 void GeometryManager::generateQuad() {
@@ -357,6 +370,7 @@ void GeometryManager::generatePrism() {
     pushTri(v, l1, l0, t0); pushTri(v, l1, t0, t1); // left roof slope
     pushTri(v, l1, r1, r0); pushTri(v, l1, r0, l0); // bottom
     prismMesh.setupMesh(v);
+    keepCpu(3, v, {});
 }
 
 void GeometryManager::generateCone(int sectors) {
@@ -377,4 +391,5 @@ void GeometryManager::generateCone(int sectors) {
         pushTri(v, base, p0, p1);
     }
     coneMesh.setupMesh(v);
+    keepCpu(4, v, {});
 }

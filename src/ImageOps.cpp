@@ -1,7 +1,7 @@
 #include "ImageOps.h"
 #include <algorithm>
 #include <cmath>
-#include <numeric>
+#include <complex>
 
 namespace imgops {
 
@@ -264,6 +264,134 @@ std::vector<Blob> connectedComponents(const Mask& mask, int minArea) {
         if (b.area >= minArea) result.push_back(b);
     std::sort(result.begin(), result.end(), [](const Blob& a, const Blob& b) { return a.area > b.area; });
     return result;
+}
+
+} // namespace imgops
+
+namespace imgops {
+
+// ---------------------------------------------------------------------------
+// Otsu
+// ---------------------------------------------------------------------------
+int otsuThreshold(const Histogram& h, std::array<double, 256>* sigmaB) {
+    const double N = std::max(1, h.total);
+    double sumAll = 0.0;
+    for (int v = 0; v < 256; ++v) sumAll += static_cast<double>(v) * h.count[v];
+    double w0 = 0.0, sum0 = 0.0, best = -1.0;
+    int bestT = 0;
+    for (int t = 0; t < 256; ++t) {
+        w0 += h.count[t];
+        sum0 += static_cast<double>(t) * h.count[t];
+        double w1 = N - w0, s = 0.0;
+        if (w0 > 0.0 && w1 > 0.0) {
+            double mu0 = sum0 / w0, mu1 = (sumAll - sum0) / w1;
+            s = (w0 / N) * (w1 / N) * (mu0 - mu1) * (mu0 - mu1);
+        }
+        if (sigmaB) (*sigmaB)[t] = s;
+        if (s > best) { best = s; bestT = t; }
+    }
+    return bestT;
+}
+
+void threshold(const Image& in, int t, Image& out) {
+    out = Image(in.w, in.h);
+    for (int y = 0; y < in.h; ++y)
+        for (int x = 0; x < in.w; ++x) {
+            int v = in.at(x, y, 3) > t ? 255 : 0;
+            out.set(x, y, v, v, v);
+        }
+}
+
+// ---------------------------------------------------------------------------
+// Frequency domain
+// ---------------------------------------------------------------------------
+float filterResponse(FreqFilter type, float D, float c) {
+    c = std::max(c, 1e-3f);
+    switch (type) {
+        case FreqFilter::IdealLow:     return D <= c ? 1.0f : 0.0f;
+        case FreqFilter::GaussianLow:  return std::exp(-D * D / (2.0f * c * c));
+        case FreqFilter::IdealHigh:    return D <= c ? 0.0f : 1.0f;
+        case FreqFilter::GaussianHigh: return 1.0f - std::exp(-D * D / (2.0f * c * c));
+    }
+    return 1.0f;
+}
+
+namespace {
+using cf = std::complex<float>;
+
+// 1D DFT of n samples with stride; sign -1 forward, +1 inverse (unscaled)
+void dft1(const cf* in, cf* out, int n, int stride, float sign, const std::vector<cf>& twiddle) {
+    for (int k = 0; k < n; ++k) {
+        cf s(0.0f, 0.0f);
+        for (int x = 0; x < n; ++x) {
+            cf t = twiddle[(static_cast<size_t>(k) * x) % n];
+            s += in[x * stride] * (sign < 0 ? t : std::conj(t));
+        }
+        out[k * stride] = s;
+    }
+}
+
+void dft2(std::vector<cf>& a, int w, int h, float sign) {
+    std::vector<cf> tw(w), th(h), tmp(std::max(w, h)), res(std::max(w, h));
+    for (int i = 0; i < w; ++i) tw[i] = std::polar(1.0f, -6.2831853f * i / w);
+    for (int i = 0; i < h; ++i) th[i] = std::polar(1.0f, -6.2831853f * i / h);
+    for (int y = 0; y < h; ++y) {                                          // rows
+        dft1(&a[static_cast<size_t>(y) * w], res.data(), w, 1, sign, tw);
+        std::copy(res.begin(), res.begin() + w, a.begin() + static_cast<size_t>(y) * w);
+    }
+    for (int x = 0; x < w; ++x) {                                          // columns
+        for (int y = 0; y < h; ++y) tmp[y] = a[static_cast<size_t>(y) * w + x];
+        dft1(tmp.data(), res.data(), h, 1, sign, th);
+        for (int y = 0; y < h; ++y) a[static_cast<size_t>(y) * w + x] = res[y];
+    }
+}
+}
+
+void frequencyFilter(const Image& in, FreqFilter type, float cutoff, Image& out, bool grey, FreqResult* info) {
+    const int w = in.w, h = in.h;
+    const size_t N = static_cast<size_t>(w) * h;
+    out = Image(w, h);
+    // H(u,v) with the zero frequency at index (0,0) after shifting: D measured to the nearest copy of the origin
+    std::vector<float> H(N);
+    for (int v = 0; v < h; ++v)
+        for (int u = 0; u < w; ++u) {
+            float du = static_cast<float>(std::min(u, w - u)), dv = static_cast<float>(std::min(v, h - v));
+            H[static_cast<size_t>(v) * w + u] = filterResponse(type, std::sqrt(du * du + dv * dv), cutoff);
+        }
+    const bool high = type == FreqFilter::IdealHigh || type == FreqFilter::GaussianHigh;
+    std::vector<cf> a(N);
+    const int channels = grey ? 1 : 3;
+    for (int c = 0; c < channels; ++c) {
+        int ch = grey ? 3 : c;
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) a[static_cast<size_t>(y) * w + x] = cf(static_cast<float>(in.at(x, y, ch)), 0.0f);
+        dft2(a, w, h, -1.0f);
+        if (info && c == 0) {                                                 // centred log-magnitude for display
+            info->logMagnitude.assign(N, 0.0f);
+            info->response.assign(N, 0.0f);
+            float mx = 1e-6f;
+            for (int v = 0; v < h; ++v)
+                for (int u = 0; u < w; ++u) {
+                    size_t src = static_cast<size_t>(v) * w + u;
+                    size_t dst = static_cast<size_t>((v + h / 2) % h) * w + (u + w / 2) % w;
+                    float m = std::log(1.0f + std::abs(a[src]));
+                    info->logMagnitude[dst] = m;
+                    info->response[dst] = H[src];
+                    mx = std::max(mx, m);
+                }
+            for (float& m : info->logMagnitude) m /= mx;
+        }
+        for (size_t i = 0; i < N; ++i) a[i] *= H[i];                          // G = H . F
+        dft2(a, w, h, +1.0f);
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) {
+                float v = a[static_cast<size_t>(y) * w + x].real() / static_cast<float>(N) + (high ? 128.0f : 0.0f);
+                uint8_t b = clampByte(v);
+                size_t k = out.index(x, y);
+                if (grey) out.px[k] = out.px[k + 1] = out.px[k + 2] = b;
+                else out.px[k + c] = b;
+            }
+    }
 }
 
 } // namespace imgops

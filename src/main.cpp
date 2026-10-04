@@ -157,7 +157,7 @@ int main(int argc, char** argv) {
 
     // 5. Initialize Procedural Geometries, the town and its traffic
     geoManager.init();
-    town.init();
+    town.init(geoManager);
     traffic.init();
     cctvChain.yawAngle = 225.0f;     // looks diagonally across the junction (-x, -z)
     cctvChain.minYaw = 165.0f;

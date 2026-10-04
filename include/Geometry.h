@@ -19,6 +19,8 @@ public:
 
     Mesh();
     ~Mesh();
+    Mesh(const Mesh&) = delete;              // owns GL objects: not copyable
+    Mesh& operator=(const Mesh&) = delete;
 
     void setupMesh(const std::vector<Vertex>& vertices, const std::vector<unsigned int>& indices = {});
     void draw() const;
@@ -26,6 +28,10 @@ public:
 
 class GeometryManager {
 public:
+    // CPU copies of the unit meshes: 0 cube, 1 cylinder, 2 sphere, 3 prism, 4 cone (see MeshKind in Town.h)
+    struct CpuMesh { std::vector<Vertex> vertices; std::vector<unsigned int> indices; };
+    CpuMesh cpu[5];
+
     Mesh cubeMesh;
     Mesh cylinderMesh;
     Mesh sphereMesh;
@@ -48,6 +54,7 @@ public:
     void drawCone() const;
 
 private:
+    void keepCpu(int kind, const std::vector<Vertex>& v, const std::vector<unsigned int>& idx);
     void generateCube();
     void generateCylinder(int sectors = 32);
     void generateSphere(int rings = 20, int sectors = 32);

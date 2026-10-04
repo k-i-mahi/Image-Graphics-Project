@@ -86,7 +86,13 @@ No external image/model assets — every object, texture pattern and person is g
   and a Shaheed Minar memorial, two market blocks (shop fronts, awnings, neon signs, roof water tanks),
   apartments (balconies, water tanks), houses with tiled gable roofs, school (brick, playground, national flag),
   NightWatch HQ (walled compound, watch tower, radio mast, containers), bus terminal, fuel station.
-- **Outskirts:** 110 trees, tin-roof village houses, hills fading into fog.
+- **Outskirts:** trees and coconut palms, tin-roof village houses, six rice paddies with earth dikes (`PAT_PADDY`), a
+  village pond with boats, hills fading into fog.
+- **Street detail:** concrete electricity poles with crossarms, insulators and transformers along the east-west streets;
+  three cables per span hang as parabolas `y = y0 − 4 s t (1 − t)`; rooftop billboards (glow at night); split AC units;
+  solar panels; a tea stall in the park; palms built from a curved trunk of rods and drooping two-part fronds.
+- **Static batching:** all static primitives are pre-transformed and merged per material at start-up (`buildBatches`):
+  thousands of primitives become a few hundred draws.
 
 ### 4.2 Traffic and people (simulation + hierarchical modelling)
 - **Vehicles:** car, taxi, police car (flashing light bar), bus, cargo truck, **CNG auto-rickshaw**,
@@ -111,6 +117,8 @@ No external image/model assets — every object, texture pattern and person is g
 - **Shading models:** Flat, Gouraud, Phong (`F`).
 - **Cameras (`C`):** free fly → CCTV (4-DOF chain `M_lens = M_base · R_y(yaw) · T_arm · R_x(pitch) · T_lens`) → chase
   camera behind the patrol truck (eye placed on the route 14 m behind, smoothed with `1 − e^(−4Δt)`).
+- **Sky reflections:** Schlick Fresnel `F = F0 + (1 − F0)(1 − N·V)^5` times the sky gradient in the reflected
+  direction, on glass towers, window panes, water, paddy water and glossy paint.
 - **Bloom:** scene and sky write a glow mask into alpha (emissive surfaces only), half-resolution bright pass,
   three rounds of a separable 9-tap binomial Gaussian (18 samples instead of 81 per round), screen blend.
 - **Performance:** uniform locations cached, material uniforms skipped when unchanged, distant people/vehicles culled;
@@ -167,6 +175,12 @@ plain background subtraction worth discussing.
 - A **light source** above the operation panel throws one beam onto the kernel window in the original and one
   onto the output pixel in the processed image; magnifier lines connect them to the zoomed neighbourhoods.
 - The processed image is **built in raster order** (1 … 20000 px/s, step one pixel with ← / →).
+- **Interface:** TrueType text (Segoe UI / Consolas via `stb_truetype`), rounded cards with soft shadows, colour-coded
+  sections (input amber, operation violet, output cyan), pill status chips, a PSNR scorecard, a scan progress bar.
+- **Otsu thresholding:** histogram, σB²(t) curve and t* drawn; output = 255 if Y > t*.
+- **Frequency-domain filtering (`F`, `[` `]`, wheel on the spectrum):** separable 2D DFT, ideal / Gaussian low- and
+  high-pass H(D) with cut-off D0, inverse DFT; the centred log-magnitude spectrum is shown with the pass band tinted
+  and the cut-off circle; the H(D) profile is plotted. High-pass results get +128 so negative values are visible.
 - **Operations:** convolution (editable 3×3 / 5×5 kernel, divisor auto or manual, `abs()`, `+128`, 12 presets),
   **median**, **min (erosion)**, **max (dilation)** — showing the sorted window — and **histogram equalization**
   (histogram + CDF drawn, mapping of the current pixel; colour images are equalized on luminance).
