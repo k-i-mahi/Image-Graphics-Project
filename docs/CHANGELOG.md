@@ -4,6 +4,18 @@ Tracks what has been built, fixed and added. Newest entries at the top.
 
 ---
 
+## 2026-10-05 (part 4) — Version 5: build fixes, bigger town
+
+- [x] **Fixed: `build.bat` "not recognized"** when typed in PowerShell: PowerShell does not run scripts from the
+  current folder by name, so the docs now say `.\build.bat`. `build.bat` itself now changes to its own folder (works
+  when started from anywhere or double-clicked), checks for g++ / cmake / ninja with a clear message, fetches the
+  GLFW submodule if missing, retries a stale CMake cache with `--fresh`, and pauses on failure. `run.bat` uses full paths.
+- [x] **Fixed:** the exe had to be started from `build-mingw\`; it now finds `shaders\` next to itself.
+- [x] **Town 2.25× larger:** 7 × 7 roads, 36 blocks. New districts: two bazaars, cricket ground with floodlights,
+  hospital with helipad, two factories. 4 new vehicle routes (69 vehicles), about 160 people.
+- [x] Ground plane extended so the land reaches the horizon fog; far plane 700 m.
+- [x] Shadow pass skips people beyond 60 m: draw calls 6,407 → 3,159, still 60 FPS.
+
 ## 2026-10-05 (part 3) — Version 4: visuals and content
 
 - [x] **UI**: TrueType fonts (Segoe UI, Consolas) via `stb_truetype` font atlas with mipmaps; UTF-8 text (Σ × ÷ → σ ∞);

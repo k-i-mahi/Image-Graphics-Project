@@ -44,7 +44,7 @@ No external image/model assets — every object, texture pattern and person is g
 | File | Role |
 |---|---|
 | `src/main.cpp` | Window, render loop, cameras (free / CCTV / chase), input, screenshots, command-line shot mode |
-| `include/Town.h`, `src/Town.cpp` | Street grid constants, `Painter` draw helper, the 16 city blocks, lamps, outskirts |
+| `include/Town.h`, `src/Town.cpp` | Street grid constants, `Painter` draw helper, the 36 city blocks, lamps, outskirts |
 | `src/TownActors.cpp` | Animated parts: traffic signals, 8 vehicle models, hierarchical people, CCTV, fountain, Bézier guide |
 | `include/Traffic.h`, `src/Traffic.cpp` | Lane routes (straights + Bézier turns), signal cycle, vehicle and pedestrian behaviour |
 | `include/Bezier.h` | Cubic Bézier segment `P(t)`, `P'(t)` |
@@ -77,12 +77,15 @@ No external image/model assets — every object, texture pattern and person is g
 ## 4. Computer Graphics features
 
 ### 4.1 The town
-- **Street grid:** 5 × 5 roads, 40 m blocks, two lanes, **left-hand traffic** (Bangladesh). The two main roads
+- **Street grid:** 7 × 7 roads (6 × 6 = 36 blocks), 40 m blocks, two lanes, **left-hand traffic** (Bangladesh). The two main roads
   continue out of town as highways.
 - **Road markings from world position** (fragment shader, no textures): dashed centre line, edge lines,
   **zebra crossings** at every junction, **stop lines** only on the approaching lane, tyre-worn lanes,
   painted black/white kerbs, footpath tiles.
-- **16 blocks with a purpose:** downtown glass towers, mosque (dome, minarets, ablution pool), park with fountain
+- **Outer districts (v5):** two open-air bazaars (tarp-covered stalls, produce, string lights, shoppers), a cricket
+  ground (pitch, stumps, stands, scoreboard, four floodlight towers that light the area at night), a hospital (helipad,
+  glowing red cross, ambulance), two factories (saw-tooth roofs, banded chimney with beacon, water tower), more housing.
+- **Inner 16 blocks with a purpose:** downtown glass towers, mosque (dome, minarets, ablution pool), park with fountain
   and a Shaheed Minar memorial, two market blocks (shop fronts, awnings, neon signs, roof water tanks),
   apartments (balconies, water tanks), houses with tiled gable roofs, school (brick, playground, national flag),
   NightWatch HQ (walled compound, watch tower, radio mast, containers), bus terminal, fuel station.
@@ -103,7 +106,7 @@ No external image/model assets — every object, texture pattern and person is g
 - **Behaviour:** stop at red, stop at yellow if `d > v² / 2a`, keep a gap to the vehicle ahead
   (`v ≤ v_lead + k (gap − gap_min)`), stop for pedestrians on the road; brake lights glow when decelerating.
 - **Traffic signals** at every junction: X green 11 s → yellow 2.5 s → all-red 1 s → Z green 11 s → yellow 2 s → all-red 1 s.
-- **Pedestrians (≈ 90):** hierarchical skeleton pelvis → torso → head, shoulder → elbow, hip → knee;
+- **Pedestrians (≈ 160):** hierarchical skeleton pelvis → torso → head, shoulder → elbow, hip → knee;
   walk cycle `swing = 0.45 sin(φ)`, knee bend `max(0, sin(φ + 1.6))`; saree/salwar, lungi or shirt-trousers;
   they wait at the kerb and cross on the zebra during the parallel green.
 
@@ -194,7 +197,7 @@ plain background subtraction worth discussing.
 ## 6. Build & run
 
 ```cmd
-build.bat      :: configure + compile into build-mingw\
+build.bat      :: configure + compile into build-mingw\ (works from any folder; PowerShell: .\build.bat)
 run.bat        :: build (if needed) and launch
 ```
 

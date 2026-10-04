@@ -112,6 +112,15 @@ One screen, three columns:
 | 5 | Outskirts were a flat green plane | Rice paddies with dikes, village pond with boats |
 | 6 | 6,700 draw calls left no room for detail | Static batching per material |
 
+## 2d. Design review of version 4
+
+| # | Problem | Fix (version 5) |
+|---|---|---|
+| 1 | `build.bat` failed when typed in PowerShell, and only worked from the project folder | Docs use `.\build.bat`; the script finds its own folder, checks tools, fetches the submodule |
+| 2 | The exe crashed (no shaders) when started from any other folder | Looks for `shaders\` next to the exe |
+| 3 | The town felt small: 16 blocks, edge visible from most views | 36 blocks with bazaars, cricket ground, hospital, factories; ground extends to the fog |
+| 4 | Shadow pass drew every person in town | Distance cull for shadow casters (draw calls halved) |
+
 ## 3. Order of work
 
 1. [x] **Town world + traffic + people** (Part A) — done 2026-10-05

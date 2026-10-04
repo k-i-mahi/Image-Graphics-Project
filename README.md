@@ -58,9 +58,9 @@ the live CCTV feed.
 
 | | |
 |---|---|
-| **Procedural town** | 5 × 5 street grid, 16 themed city blocks, coconut palms, electricity poles with sagging cables, glowing rooftop billboards, tea stalls, rice paddies and a village pond. Road markings are painted in the fragment shader; there are no textures or models. |
-| **Traffic simulation** | 49 vehicles of 8 types on lane routes with **cubic Bézier** turns. Heading comes from `P'(t)`; vehicles obey signals, keep their distance, and stop for people. |
-| **Hierarchical people** | About 85 pedestrians with articulated skeletons and walk cycles. They wait at kerbs and cross on green. |
+| **Procedural town** | 7 × 7 street grid with 36 city blocks: towers, mosque, park, markets, open-air bazaars, a cricket ground with floodlights, a hospital with a helipad, factories, a school, a bus terminal and housing. Also coconut palms, electricity poles with sagging cables, glowing rooftop billboards, tea stalls, rice paddies and a village pond. Road markings are painted in the fragment shader; there are no textures or models. |
+| **Traffic simulation** | 69 vehicles of 8 types on lane routes with **cubic Bézier** turns. Heading comes from `P'(t)`; vehicles obey signals, keep their distance, and stop for people. |
+| **Hierarchical people** | About 160 pedestrians, including shoppers in the bazaars, with articulated skeletons and walk cycles. They wait at kerbs and cross on green. |
 | **Rendering** | HDR + ACES, camera-following shadow map with texel snapping, 4× MSAA, **bloom from an emissive glow mask**, **Fresnel sky reflections** on glass, water and paint, procedural sky, day/night cycle, Flat / Gouraud / Phong shading. The static town is batched by material into a few hundred draw calls. |
 | **CCTV restoration** | Bilateral, median, or kernel denoising, plus **motion-adaptive temporal noise reduction** and **real histogram equalization** driven by a GPU → CPU histogram every frame. |
 | **Motion detection** | Background subtraction, thresholding, morphological opening, and connected-component labelling give bounding boxes around moving objects. The intermediate images are shown live. |
@@ -82,6 +82,8 @@ the difference $|I-B|$, and the cleaned mask.
 | ![Street](docs/screenshots/street_level.png) | ![Bloom](docs/screenshots/night_bloom.png) |
 | **Village pond, palms and boats** | **Town park and junctions** |
 | ![Pond](docs/screenshots/village_pond.png) | ![Park](docs/screenshots/town_park.png) |
+| **Cricket ground under floodlights** | **Open-air bazaar** |
+| ![Cricket](docs/screenshots/cricket_night.png) | ![Bazaar](docs/screenshots/bazaar.png) |
 | **Town at night** | **Night CCTV: degraded (left) vs. restored (right)** |
 | ![Night](docs/screenshots/town_night.png) | ![Split](docs/screenshots/dip_split_screen.png) |
 
@@ -219,13 +221,15 @@ Alternatively, download a ready-to-run build from the latest
 ```bash
 git clone --recursive https://github.com/k-i-mahi/Image-Graphics-Project.git
 cd Image-Graphics-Project
-build.bat                         # configure + compile into build-mingw\
+build.bat                         # configure + compile into build-mingw\   (PowerShell: .\build.bat)
 ctest --test-dir build-mingw      # unit tests
-run.bat                           # launch
+run.bat                           # build if needed, then launch      (PowerShell: .\run.bat)
 ```
 
-If you cloned without `--recursive`, run `git submodule update --init` first. Run the executable from
-`build-mingw\` so it finds `shaders\`.
+`build.bat` works from any folder and can be double-clicked. It fetches the GLFW submodule if it is
+missing and names any missing tool. In **PowerShell**, scripts in the current folder must be started with
+`.\` (for example `.\build.bat`), because PowerShell does not run commands from the current folder by
+name. The executable finds its `shaders\` folder next to itself, so it can be started from anywhere.
 
 ### Headless screenshot mode
 
@@ -268,7 +272,7 @@ NightWatch.exe --shot lab.bmp --camera cctv --lab --labkeys "OII^^"
 ```text
 ├── src/
 │   ├── main.cpp            render loop, cameras, input, screenshot mode
-│   ├── Town.cpp            street grid, 16 city blocks, lamps, outskirts
+│   ├── Town.cpp            street grid, 36 city blocks, lamps, outskirts
 │   ├── TownActors.cpp      signals, vehicles, people, CCTV, fountain (hierarchical models)
 │   ├── Traffic.cpp         routes, Bézier turns, signal cycle, vehicle/pedestrian behaviour
 │   ├── ImageOps.cpp        image-processing algorithms (no OpenGL, unit-tested)
