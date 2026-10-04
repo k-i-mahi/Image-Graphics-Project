@@ -7,6 +7,7 @@
 #include "Overlay2D.h"
 #include "Shader.h"
 #include "Geometry.h"
+#include "ImageOps.h"
 
 // ---------------------------------------------------------------------------
 // Image Operation Lab (view 0)
@@ -24,19 +25,18 @@
 enum LabOp { OP_CONVOLVE = 0, OP_MEDIAN, OP_MIN, OP_MAX, OP_HISTEQ, OP_COUNT };
 enum LabNoise { NOISE_NONE = 0, NOISE_GAUSSIAN, NOISE_SALT_PEPPER, NOISE_COUNT };
 
-struct LabKernel {
-    int size = 3;
-    float w[25] = { 0 };
-    float divisor = 1.0f;
+struct LabKernel : imgops::Kernel {
     bool autoDiv = true;      // divisor = sum of weights (1 if the sum is 0)
-    bool absolute = false;    // |result| (edge detectors give signed values)
-    bool offset128 = false;   // + 128 (emboss: shows negative values as dark)
 };
 
 class FilterLab {
 public:
     bool active = false;
     bool captureRequested = false;
+    bool sendToLive = false;                       // U: use this kernel in the live CCTV views
+
+    const LabKernel& currentKernel() const { return kernel; }
+    std::string kernelName() const;
 
     bool init();
     void open();                                   // enter the lab; asks for a snapshot
@@ -58,7 +58,7 @@ private:
     int snapW = 0, snapH = 0;
     int resIndex = 2;                              // index into RESOLUTIONS (128 x 72)
     int imgW = 128, imgH = 72;
-    std::vector<unsigned char> clean, input, output;
+    imgops::Image clean, input, output;
     GLuint texIn = 0, texOut = 0;
     Shader imageShader;
 
@@ -69,11 +69,11 @@ private:
     bool gray = false;
     int channel = 0;                               // channel shown in the maths (RGB mode)
     LabNoise noise = NOISE_NONE;
+    float sentFlash = 0.0f;                        // "sent to live view" message timer
     bool dirty = true;                             // output must be recomputed
     bool inputDirty = true;                        // input must be rebuilt from the snapshot
     double psnrIn = 0.0, psnrOut = 0.0;
-    int hist[3][256] = {};
-    int cdf[3][256] = {};
+    imgops::Histogram hist;                        // luminance histogram (histogram equalization)
 
     // ---- scan / focus ----
     int reveal = 0;                                // output pixels shown so far

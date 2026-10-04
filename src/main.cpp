@@ -25,11 +25,15 @@
 #include "Traffic.h"
 #include "Overlay2D.h"
 #include "FilterLab.h"
+#include "Bloom.h"
+#include "CctvAnalytics.h"
+#include "PerfStats.h"
 #include "Environment.h"
 #include "ShadowMap.h"
 
 float simWarmup = 0.0f;   // seconds of traffic simulated before the first frame (--sim)
 bool labAtStart = false;  // --lab
+bool motionAtStart = false, perfAtStart = false;   // --motion, --perf
 std::string labKeys;      // --labkeys
 bool labWasActive = false;
 
@@ -84,6 +88,11 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 // 2D overlay + step-by-step convolution demo
 Overlay2D overlay;
 FilterLab lab;   // view 0 / V: the Image Operation Lab
+Bloom bloom;                 // glow of lamps, windows, headlights (Z)
+CctvAnalytics analytics;     // motion detection + CCTV HUD (B)
+PerfStats perf;              // per-stage GPU timings (Tab)
+glm::mat4 lastViewMatrix(0.0f);
+bool sweepBeforeMotion = true;
 void saveScreenshot(int width, int height);
 bool screenshotRequested = false;
 std::string screenshotName;
@@ -184,6 +193,13 @@ int main(int argc, char** argv) {
         return -1;
     }
     if (labAtStart) lab.open();
+    if (!bloom.init(screenWidth, screenHeight) || !analytics.init() || !dipProcessor.initGL(screenWidth, screenHeight)) {
+        std::cerr << "[FATAL] Failed to initialize post-processing." << std::endl;
+        return -1;
+    }
+    perf.init();
+    perf.visible = perfAtStart;
+    if (motionAtStart) { analytics.motionEnabled = true; cctvChain.autoSweep = false; }
     printHelpGuide();
 
     float fpsTimer = 0.0f;
@@ -216,8 +232,10 @@ int main(int argc, char** argv) {
 
         // Process User Inputs
         processInput(window);
+        perf.beginFrame();
 
         // Update Dynamic Simulations
+        double simStart = glfwGetTime();
         float simDt = autoShot.on ? 1.0f / 60.0f : deltaTime;   // screenshots: fixed step
         cctvChain.update(simDt);
         traffic.update(simDt);
@@ -265,6 +283,7 @@ int main(int argc, char** argv) {
             }
         }
         env.setLocalLights(town.lampPositions(), spots, activeViewPos);
+        perf.setCpuTimes(deltaTime * 1000.0, (glfwGetTime() - simStart) * 1000.0);
         env.setShadowCenter(focus);
         town.cullCenter = activeViewPos;
         float aspect = static_cast<float>(screenWidth) / static_cast<float>(screenHeight);
@@ -277,16 +296,19 @@ int main(int argc, char** argv) {
             // STAGE 0: SHADOW MAP - scene depth as seen from the sun / moon
             // ====================================================================
             if (env.shadowsEnabled) {
+                perf.begin(PERF_SHADOW);
                 shadowMap.begin();
                 shadowShader.use();
                 shadowShader.setMat4("uLightSpace", env.lightSpaceMatrix());
                 town.render(shadowShader, geoManager, cctvChain, traffic, currentFrame, true);
                 shadowMap.end();
+                perf.end(PERF_SHADOW);
             }
 
             // ====================================================================
             // STAGE 1: 3D GRAPHICS SYNTHESIS -> RENDER TO FBO BRIDGE (4x MSAA)
             // ====================================================================
+            perf.begin(PERF_SCENE);
             fboBridge.bind();
             glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -316,7 +338,25 @@ int main(int argc, char** argv) {
 
             fboBridge.resolve();
             fboBridge.unbind();
+            perf.end(PERF_SCENE);
         }
+
+        // Bloom from the glow mask (alpha) of the camera image
+        GLuint bloomTex = 0;
+        if (render3D && bloom.enabled && !lab.active) {
+            perf.begin(PERF_BLOOM);
+            bloomTex = bloom.run(geoManager, fboBridge.getColorTexture());
+            perf.end(PERF_BLOOM);
+        }
+
+        // Motion detection on the camera frame; the background restarts whenever the camera moves
+        if (!lab.active && analytics.motionEnabled) {
+            bool moved = glm::length(glm::vec4(viewMatrix[3] - lastViewMatrix[3])) > 1e-3f ||
+                         glm::length(glm::vec3(viewMatrix[0] - lastViewMatrix[0])) > 1e-4f ||
+                         glm::length(glm::vec3(viewMatrix[2] - lastViewMatrix[2])) > 1e-4f;
+            analytics.update(fboBridge.fboID, fboBridge.width, fboBridge.height, simDt, moved);
+        }
+        lastViewMatrix = viewMatrix;
 
         if (lab.active && lab.captureRequested) {
             lab.captureRequested = false;
@@ -338,17 +378,44 @@ int main(int argc, char** argv) {
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
 
+        perf.begin(PERF_DIP);
         if (lab.active) {
             // Image Operation Lab replaces the DIP output
             lab.update(autoShot.on ? 1.0f / 60.0f : deltaTime);
             lab.render(overlay, geoManager, screenWidth, screenHeight, currentFrame);
+            if (lab.sendToLive) {   // U in the lab: the designed kernel becomes the live CCTV filter
+                lab.sendToLive = false;
+                const LabKernel& k = lab.currentKernel();
+                std::fill(dipProcessor.customKernel, dipProcessor.customKernel + 25, 0.0f);
+                for (int i = 0; i < k.size * k.size; ++i) dipProcessor.customKernel[i] = k.w[i] / k.divisor;
+                dipProcessor.customSize = k.size;
+                dipProcessor.customAbs = k.absolute;
+                dipProcessor.customName = "Lab: " + lab.kernelName();
+                dipProcessor.useCustomKernel = true;
+                dipProcessor.denoise = DENOISE_KERNEL;
+                std::cout << "[LAB] Kernel sent to the live CCTV pipeline (views 4 and 7)" << std::endl;
+            }
         } else {
             dipProcessor.renderPostProcess(dipShader, geoManager,
                                           fboBridge.getColorTexture(),
                                           fboBridge.getDepthTexture(),
+                                          bloomTex, bloom.strength,
                                           screenWidth, screenHeight,
                                           currentFrame);
         }
+        perf.end(PERF_DIP);
+
+        // HUD, motion boxes and the performance panel
+        perf.begin(PERF_UI);
+        if (!lab.active) {
+            int vm = dipProcessor.currentViewMode;
+            bool hud = cameraMode == CAM_CCTV && vm != VIEW_PRISTINE && vm != VIEW_DEPTH_MAP && vm != VIEW_DOF;
+            analytics.render(overlay, geoManager, screenWidth, screenHeight, env.clockString(), hud, currentFrame);
+        }
+        std::string extra = std::to_string(traffic.vehicles.size()) + " vehicles  " + std::to_string(traffic.pedestrians.size()) +
+                            " people  " + std::to_string(town.lampPositions().size()) + " lamps";
+        perf.render(overlay, screenWidth, screenHeight, extra);
+        perf.end(PERF_UI);
 
         // Mouse cursor: free in the lab, captured for the fly camera
         if (lab.active != labWasActive && !autoShot.on) {
@@ -463,10 +530,36 @@ void processInput(GLFWwindow* window) {
     // Toggle Convolution Filter: K
     if (glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS && !keysProcessed[GLFW_KEY_K]) {
         keysProcessed[GLFW_KEY_K] = true;
-        dipProcessor.filterIndex = (dipProcessor.filterIndex + 1) % CONV_KERNEL_COUNT;
+        if (dipProcessor.useCustomKernel || dipProcessor.denoise != DENOISE_KERNEL) dipProcessor.useCustomKernel = false;
+        else dipProcessor.filterIndex = (dipProcessor.filterIndex + 1) % CONV_KERNEL_COUNT;
+        dipProcessor.denoise = DENOISE_KERNEL;
         std::cout << "[DIP FILTER] Active Filter: " << dipProcessor.getFilterName() << std::endl;
     }
     if (glfwGetKey(window, GLFW_KEY_K) == GLFW_RELEASE) keysProcessed[GLFW_KEY_K] = false;
+
+    // Denoise method for views 4 / 7: J cycles bilateral -> median -> convolution kernel
+    if (keyPressedOnce(window, GLFW_KEY_J)) {
+        dipProcessor.denoise = dipProcessor.denoise == DENOISE_BILATERAL ? DENOISE_MEDIAN
+                             : (dipProcessor.denoise == DENOISE_MEDIAN ? DENOISE_KERNEL : DENOISE_BILATERAL);
+        std::cout << "[DIP] Denoise: " << dipProcessor.getFilterName() << std::endl;
+    }
+    // Motion detection: B (the CCTV stops panning so the background can be learned)
+    if (keyPressedOnce(window, GLFW_KEY_B)) {
+        analytics.motionEnabled = !analytics.motionEnabled;
+        analytics.reset();
+        if (analytics.motionEnabled) { sweepBeforeMotion = cctvChain.autoSweep; cctvChain.autoSweep = false; }
+        else cctvChain.autoSweep = sweepBeforeMotion;
+        std::cout << "[CCTV] Motion detection " << (analytics.motionEnabled ? "ON" : "OFF") << std::endl;
+    }
+    if (keyPressedOnce(window, GLFW_KEY_Z)) {
+        bloom.enabled = !bloom.enabled;
+        std::cout << "[POST] Bloom " << (bloom.enabled ? "ON" : "OFF") << std::endl;
+    }
+    if (keyPressedOnce(window, GLFW_KEY_TAB)) perf.visible = !perf.visible;
+    if (keyPressedOnce(window, GLFW_KEY_U)) {
+        dipProcessor.temporalNR = !dipProcessor.temporalNR;
+        std::cout << "[DIP] Temporal noise reduction " << (dipProcessor.temporalNR ? "ON" : "OFF") << std::endl;
+    }
 
     // Cycle light groups: L
     if (keyPressedOnce(window, GLFW_KEY_L)) {
@@ -486,7 +579,7 @@ void processInput(GLFWwindow* window) {
     if (glfwGetKey(window, GLFW_KEY_H) == GLFW_PRESS && !keysProcessed[GLFW_KEY_H]) {
         keysProcessed[GLFW_KEY_H] = true;
         dipProcessor.enableHistogramStretch = !dipProcessor.enableHistogramStretch;
-        std::cout << "[DIP] Contrast Stretch & Histogram Reconstruction: "
+        std::cout << "[DIP] Histogram equalization (live): "
                   << (dipProcessor.enableHistogramStretch ? "ON" : "OFF") << std::endl;
     }
     if (glfwGetKey(window, GLFW_KEY_H) == GLFW_RELEASE) keysProcessed[GLFW_KEY_H] = false;
@@ -657,6 +750,10 @@ void parseArgs(int argc, char** argv) {
         else if (a == "--sim") simWarmup = static_cast<float>(std::atof(next("0").c_str()));
         else if (a == "--guide") town.drawBezierGuide = true;
         else if (a == "--lab") labAtStart = true;
+        else if (a == "--motion") motionAtStart = true;
+        else if (a == "--perf") perfAtStart = true;
+        else if (a == "--nobloom") bloom.enabled = false;
+        else if (a == "--kernel") dipProcessor.denoise = DENOISE_KERNEL;
         else if (a == "--labkeys") labKeys = next("");   // keys typed into the lab at start, e.g. "OOI"
         else if (a == "--camera") {
             std::string c = next("free");
@@ -709,6 +806,8 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
         screenWidth = width;
         screenHeight = height;
         fboBridge.resize(width, height);
+        bloom.resize(width, height);
+        dipProcessor.resize(width, height);
         glViewport(0, 0, width, height);
     }
 }
@@ -736,8 +835,11 @@ void printHelpGuide() {
     std::cout << " [F11]   : Toggle Fullscreen\n";
     std::cout << " [F12]   : Save Screenshot (.bmp)\n";
     std::cout << " [L]     : Cycle Lights (All -> Sun/Moon -> Street lamps -> CCTV IR + headlights)\n";
-    std::cout << " [K]     : Cycle Filters (Gaussian 3x3/5x5, Box, Sharpen, Laplacian, Sobel X, Emboss)\n";
-    std::cout << " [H]     : Toggle Dynamic Contrast Reconstruction / Equalization\n";
+    std::cout << " [K]     : Live filter kernel (Gaussian 3x3/5x5, Box, Sharpen, Laplacian, Sobel X, Emboss)\n";
+    std::cout << " [J]     : Live denoise: 5x5 bilateral -> 3x3 median -> kernel   [U] temporal NR\n";
+    std::cout << " [H]     : Live histogram equalization on/off\n";
+    std::cout << " [B]     : CCTV motion detection (background subtraction, morphology, components)\n";
+    std::cout << " [Z]     : Bloom on/off      [Tab] Performance panel (GPU ms per stage)\n";
     std::cout << " [P]     : Toggle CCTV Kinematic Auto-Pan Sweep\n";
     std::cout << " [G]     : Show patrol route + Bezier control points P0..P3 of every turn\n";
     std::cout << " [SPACE] : Pause / Resume traffic, pedestrians and signals\n";

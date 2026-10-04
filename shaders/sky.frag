@@ -57,5 +57,6 @@ void main() {
         col = mix(col, cloud, c * 0.85);
     }
 
-    FragColor = vec4(col, 1.0);
+    // alpha = glow mask for bloom: only the sun disc and the moon
+    FragColor = vec4(col, smoothstep(0.93, 1.0, max(col.r, max(col.g, col.b))));
 }

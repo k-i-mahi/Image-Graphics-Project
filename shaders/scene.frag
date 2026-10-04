@@ -321,5 +321,8 @@ void main() {
     float fog = 1.0 - exp(-pow(d * uFogDensity, 2.0));
     color = mix(color, uFogColor, clamp(fog, 0.0, 1.0));
 
-    FragColor = vec4(color, 1.0);
+    // Alpha = glow mask for bloom: only light-emitting surfaces (lamps, windows,
+    // headlights, signals, neon) glow, so bright daylight surfaces do not bloom.
+    float glow = clamp(dot(emissive, vec3(0.299, 0.587, 0.114)) * uExposure * 1.3, 0.0, 1.0);
+    FragColor = vec4(color, glow * (1.0 - clamp(fog, 0.0, 1.0)));
 }

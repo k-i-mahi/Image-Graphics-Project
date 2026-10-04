@@ -4,6 +4,22 @@ Tracks what has been built, fixed and added. Newest entries at the top.
 
 ---
 
+## 2026-10-05 (part 2) — Version 3: restoration, analytics, measurement, engineering
+
+- [x] **ImageOps library** (`src/ImageOps.cpp`): convolution, rank filters, histogram equalization, noise, PSNR,
+  morphology, 8-connected component labelling — no OpenGL. The lab now calls it (identical results: PSNR 16.1 → 22.9 dB).
+- [x] **Unit tests** (`tests/test_imageops.cpp`, `ctest`): 13 groups, 39 checks, all passing.
+- [x] **CI**: GitHub Actions builds with MinGW-w64 GCC, runs the tests, uploads `NightWatch-windows-x64`.
+- [x] **Live histogram equalization**: stage texture → GPU downscale → histogram → LUT texture (replaces the contrast curve).
+- [x] **Denoising**: 5×5 bilateral (default), 3×3 median sorting network, or kernel (`J`); **temporal NR** (`U`).
+  Default sensor noise lowered to 0.10 so the night scene is recoverable.
+- [x] **Motion detection** (`B`) with CCTV HUD (camera id, clock, REC) and pipeline thumbnails.
+- [x] **Bloom** from an emissive glow mask written to the alpha channel (`Z`).
+- [x] **Performance panel** (`Tab`): GPU ms per stage via timer queries, CPU simulation time, draw calls.
+- [x] Lab → live: `U` sends the designed kernel to views 4 and 7.
+- [x] Fixed: LUT texture left bound on unit 0 tinted view 7 red; mipmap read-back of the FBO returned zeros after frame 1.
+- [x] Removed the obsolete side-by-side shader mode.
+
 ## 2026-10-05 — Town world + Image Operation Lab (master plan parts A and B)
 
 See [`ROADMAP.md`](ROADMAP.md) for the critique that motivated this pass.

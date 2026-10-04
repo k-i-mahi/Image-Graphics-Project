@@ -9,8 +9,22 @@ uniform sampler2D uDepthTexture;
 // View Mode
 // 1 = Pristine, 2 = CCTV Live, 3 = Degraded Sensor, 4 = Enhanced DIP,
 // 5 = Depth Map, 6 = Depth of Field, 7 = Split Screen,
-// 8 = Sobel Edge Detection, 9 = Night Vision, 10 = Side-by-Side Filter Compare
+// 8 = Sobel Edge Detection, 9 = Night Vision
+// 100 = internal stage: the denoised degraded image only (read back for the histogram)
 uniform int uViewMode;
+
+// Bloom (glow of lamps / windows / headlights), half resolution, screen-blended
+uniform sampler2D uBloom;
+uniform float uBloomStrength;     // 0 = off
+
+// Live histogram equalization: 256 x 1 lookup table built on the CPU from the
+// histogram of the denoised frame (uStage), see DIPProcessor::updateEqualizationLUT
+uniform sampler2D uEqLUT;
+uniform sampler2D uStage;
+uniform sampler2D uPrevStage;     // previous frame's stage (temporal noise reduction)
+uniform bool uTemporal;
+uniform bool uUseStage;
+uniform int uDenoise;             // 0 = convolution kernel, 1 = 3x3 median, 2 = 5x5 bilateral
 
 // Convolution kernel (normalized weights, row-major, up to 5x5) - see Kernels.h
 uniform float uKernel[25];
@@ -24,7 +38,6 @@ uniform float uTime;
 uniform vec2 uScreenResolution;
 
 // Enhancement parameters
-uniform float uContrastStretch;
 uniform bool uEnableEqualization;
 
 // Depth-driven Depth of Field
@@ -89,15 +102,67 @@ vec3 applyKernel(vec2 uv, bool degrade) {
     return clamp(result, 0.0, 1.0);
 }
 
-// Contrast Stretching and Dynamic Range Enhancement
+// 3x3 median of the degraded image, per channel. Component-wise min/max on
+// vec3 make this a sorting network for R, G and B at once (19 compare-swaps).
+#define SWAP(a, b) { vec3 t = min(a, b); b = max(a, b); a = t; }
+vec3 medianDenoise(vec2 uv) {
+    vec2 t = 1.0 / uScreenResolution;
+    vec3 v[9];
+    for (int j = 0; j < 3; ++j)
+        for (int i = 0; i < 3; ++i) {
+            vec2 s = uv + vec2(float(i - 1), float(1 - j)) * t;
+            v[j * 3 + i] = degradeColor(texture(uColorTexture, s).rgb, s);
+        }
+    SWAP(v[1], v[2]); SWAP(v[4], v[5]); SWAP(v[7], v[8]);
+    SWAP(v[0], v[1]); SWAP(v[3], v[4]); SWAP(v[6], v[7]);
+    SWAP(v[1], v[2]); SWAP(v[4], v[5]); SWAP(v[7], v[8]);
+    SWAP(v[0], v[3]); SWAP(v[5], v[8]); SWAP(v[4], v[7]);
+    SWAP(v[3], v[6]); SWAP(v[1], v[4]); SWAP(v[2], v[5]);
+    SWAP(v[4], v[7]); SWAP(v[4], v[2]); SWAP(v[6], v[4]);
+    SWAP(v[4], v[2]);
+    return v[4];
+}
+
+// 5x5 bilateral filter: each neighbour q is weighted by its distance AND by how
+// similar its colour is to the centre p, so noise is averaged away but edges stay:
+//   w(q) = exp(-|q - p|^2 / 2 sigma_s^2) * exp(-|I(q) - I(p)|^2 / 2 sigma_r^2)
+vec3 bilateralDenoise(vec2 uv) {
+    vec2 t = 1.0 / uScreenResolution;
+    vec3 centre = degradeColor(texture(uColorTexture, uv).rgb, uv);
+    const float sigmaS = 1.6;
+    float sigmaR = 0.12 + 0.9 * uNoiseIntensity;      // range kernel follows the noise level
+    vec3 sum = vec3(0.0);
+    float wsum = 0.0;
+    for (int j = -2; j <= 2; ++j)
+        for (int i = -2; i <= 2; ++i) {
+            vec2 s = uv + vec2(float(i), float(j)) * t;
+            vec3 c = degradeColor(texture(uColorTexture, s).rgb, s);
+            vec3 d = c - centre;
+            float w = exp(-float(i * i + j * j) / (2.0 * sigmaS * sigmaS)) * exp(-dot(d, d) / (2.0 * sigmaR * sigmaR));
+            sum += c * w;
+            wsum += w;
+        }
+    return sum / wsum;
+}
+
+// Sensor image after noise removal (kernel, median or bilateral)
+vec3 denoised(vec2 uv) {
+    if (uDenoise == 1) return medianDenoise(uv);
+    if (uDenoise == 2) return bilateralDenoise(uv);
+    return applyKernel(uv, true);
+}
+
+// Histogram equalization on luminance: Y' = LUT[Y], colour scaled by Y'/Y
 vec3 enhanceContrast(vec3 color) {
     if (!uEnableEqualization) return color;
+    float y = dot(color, vec3(0.299, 0.587, 0.114));
+    float ye = texture(uEqLUT, vec2((floor(y * 255.0 + 0.5) + 0.5) / 256.0, 0.5)).r;
+    return clamp(color * (ye / max(y, 1.0 / 255.0)), 0.0, 1.0);
+}
 
-    // Undo the sensor's low-light gain loss, then a normalized exponential shoulder:
-    // lifts dark/mid tones strongly while highlights roll off instead of clipping.
-    vec3 stretched = pow(color * uContrastStretch, vec3(0.9));
-    const float k = 1.2;
-    return clamp((1.0 - exp(-k * stretched)) / (1.0 - exp(-k)), 0.0, 1.0);
+// Filtered sensor image: from the stage texture when it was rendered this frame
+vec3 filteredSensor(vec2 uv) {
+    return uUseStage ? texture(uStage, uv).rgb : denoised(uv);
 }
 
 // Equation 2: R(x, y) = alpha * |Z(x, y) - Zfocus|
@@ -199,6 +264,22 @@ vec3 applyCCTVOverlay(vec3 color, vec2 uv) {
 
 void main() {
     vec3 pristine = texture(uColorTexture, TexCoords).rgb;
+    if (uBloomStrength > 0.0) {
+        vec3 glow = texture(uBloom, TexCoords).rgb * uBloomStrength;
+        pristine = 1.0 - (1.0 - pristine) * (1.0 - clamp(glow, 0.0, 1.0));   // screen blend
+    }
+    if (uViewMode == 100) {                     // stage pass for the live histogram
+        vec3 cur = denoised(TexCoords);
+        if (uTemporal) {
+            // Motion-adaptive temporal noise reduction (CCTV "3D-DNR"):
+            //   out = prev + a (cur - prev),  a = 0.2 where the pixel is static, 1 where it moved
+            vec3 prev = texture(uPrevStage, TexCoords).rgb;
+            float a = mix(0.2, 1.0, smoothstep(0.06, 0.18, length(cur - prev)));
+            cur = mix(prev, cur, a);
+        }
+        FragColor = vec4(cur, 1.0);
+        return;
+    }
     vec3 finalOutput;
 
     switch (uViewMode) {
@@ -216,7 +297,7 @@ void main() {
             break;
         }
         case 4: { // VIEW_ENHANCED: Denoised by spatial convolution + contrast stretched
-            vec3 filtered = applyKernel(TexCoords, true);
+            vec3 filtered = filteredSensor(TexCoords);
             vec3 enhanced = enhanceContrast(filtered);
             finalOutput = applyCCTVOverlay(enhanced, TexCoords);
             break;
@@ -244,7 +325,7 @@ void main() {
                 finalOutput = applyCCTVOverlay(degraded, TexCoords);
             } else {
                 // Right: Enhanced DIP Feed
-                vec3 filtered = applyKernel(TexCoords, true);
+                vec3 filtered = filteredSensor(TexCoords);
                 vec3 enhanced = enhanceContrast(filtered);
                 finalOutput = applyCCTVOverlay(enhanced, TexCoords);
             }
@@ -258,24 +339,6 @@ void main() {
         }
         case 9: { // VIEW_NIGHT_VISION: Green phosphor image intensifier
             finalOutput = applyNightVision(pristine, TexCoords);
-            break;
-        }
-        case 10: { // VIEW_SIDE_BY_SIDE: original (left) vs filtered (right), same aspect ratio
-            // Each half shows the whole frame at half size, centred vertically.
-            float gap = 0.01;
-            float panelW = 0.5 - 1.5 * gap;
-            float panelH = panelW;                 // same aspect as the screen
-            float y0 = 0.5 - panelH * 0.5;
-            vec2 leftOrigin = vec2(gap, y0);
-            vec2 rightOrigin = vec2(0.5 + 0.5 * gap, y0);
-            vec2 lp = (TexCoords - leftOrigin) / vec2(panelW, panelH);
-            vec2 rp = (TexCoords - rightOrigin) / vec2(panelW, panelH);
-            finalOutput = vec3(0.06, 0.07, 0.10);
-            if (all(greaterThanEqual(lp, vec2(0.0))) && all(lessThanEqual(lp, vec2(1.0)))) {
-                finalOutput = texture(uColorTexture, lp).rgb;
-            } else if (all(greaterThanEqual(rp, vec2(0.0))) && all(lessThanEqual(rp, vec2(1.0)))) {
-                finalOutput = applyKernel(rp, false);
-            }
             break;
         }
         default: {

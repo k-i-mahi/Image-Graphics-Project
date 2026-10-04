@@ -53,7 +53,14 @@ No external image/model assets — every object, texture pattern and person is g
 | `src/Environment.cpp` | Time of day, sky, fog, exposure; picks the nearest 16 lamps + 12 spot lights; camera-following shadow box |
 | `src/ShadowMap.cpp` | Depth framebuffer for sun/moon shadows |
 | `src/FBO.cpp` | Offscreen framebuffer with colour + depth textures (4x MSAA resolve) |
-| `src/DIPProcessor.cpp` | Uniforms for the live DIP shader (`dip.frag`), view/filter names |
+| `include/ImageOps.h`, `src/ImageOps.cpp` | **All image algorithms** (convolution, rank filters, equalization, noise, PSNR, morphology, connected components) — plain C++, unit-tested |
+| `tests/test_imageops.cpp` | Unit tests (`ctest`) |
+| `src/DIPProcessor.cpp` | Live pipeline: uniforms, two-pass enhancement (stage texture → histogram → LUT), temporal NR ping-pong |
+| `include/Downsampler.h` | GPU blit downscale + small `glReadPixels` (histogram and motion read-back) |
+| `src/CctvAnalytics.cpp` | Motion detection (background subtraction → threshold → opening → components) and the CCTV HUD |
+| `src/Bloom.cpp`, `shaders/bloom_*.frag` | Glow-mask bloom: bright pass + separable Gaussian |
+| `src/PerfStats.cpp` | GPU timer queries per stage, draw-call counter, performance panel |
+| `.github/workflows/build.yml` | CI: build with MinGW-w64, run tests, upload a Windows build |
 | `include/Kernels.h` | Kernel table used by the live GPU filters (`K`) |
 | `include/FilterLab.h`, `src/FilterLab.cpp` | **Image Operation Lab** (view `0` / `V`) |
 | `src/Overlay2D.cpp` | 2D rectangles, gradient triangles, lines, text; additive "light" blending |
@@ -104,8 +111,11 @@ No external image/model assets — every object, texture pattern and person is g
 - **Shading models:** Flat, Gouraud, Phong (`F`).
 - **Cameras (`C`):** free fly → CCTV (4-DOF chain `M_lens = M_base · R_y(yaw) · T_arm · R_x(pitch) · T_lens`) → chase
   camera behind the patrol truck (eye placed on the route 14 m behind, smoothed with `1 − e^(−4Δt)`).
+- **Bloom:** scene and sky write a glow mask into alpha (emissive surfaces only), half-resolution bright pass,
+  three rounds of a separable 9-tap binomial Gaussian (18 samples instead of 81 per round), screen blend.
 - **Performance:** uniform locations cached, material uniforms skipped when unchanged, distant people/vehicles culled;
-  60 FPS (V-sync) at 1280×720 on this PC.
+  60 FPS (V-sync) at 1280×720 on this PC. `Tab` shows GPU time per stage (timer queries, read one frame late)
+  and the draw-call count — e.g. shadow 1.2 ms, scene 7.7 ms, bloom 0.2 ms, image processing 0.1–1.9 ms.
 
 ---
 
@@ -116,14 +126,36 @@ No external image/model assets — every object, texture pattern and person is g
 | View | Technique |
 |---|---|
 | 3 Degraded | Intensity dampening `I·κ` + Gaussian noise via Box-Muller `Z = sqrt(-2 ln U1) cos(2π U2)` |
-| 4 Enhanced | Spatial convolution (`K` kernel) + contrast stretch |
+| 4 Enhanced | Denoise (5×5 **bilateral** / 3×3 **median** / `K` kernel, `J`) → **temporal NR** (`U`) → **histogram equalization** (`H`) |
 | 5 Depth map | Linearised depth from the depth buffer |
 | 6 Depth of field | Blur radius `R(x,y) = α·|Z(x,y) − Z_focus|`, 16-tap disc kernel |
 | 7 Split screen | Degraded vs enhanced, movable divider |
 | 8 Sobel edges | `G = sqrt(Gx² + Gy²)` on luminance |
 | 9 Night vision | Luminance gain + green phosphor + grain + goggle mask |
 
-### 5.2 Image Operation Lab (view `0` or `V`)
+### 5.2 How views 4 and 7 work (two passes per frame)
+
+1. **Stage pass:** degrade → denoise → temporal noise reduction, written to a stage texture (ping-pong pair:
+   this frame / previous frame). Temporal NR: `out = prev + a (cur − prev)`, `a = 0.2` where
+   `|cur − prev|` is small (static), `1` where it is large (motion), so moving objects do not ghost.
+2. **Histogram:** the stage image is scaled to 240 px wide on the GPU (`glBlitFramebuffer`), read back, and its
+   luminance histogram turned into the equalization lookup table by `imgops::equalizationLUT` — the same,
+   unit-tested function the lab uses. The LUT is uploaded as a 256 × 1 texture.
+3. **Final pass:** `Y' = LUT[Y]`, colour scaled by `Y'/Y`, then the CCTV overlay.
+
+The 3×3 median runs on the GPU as a 19-swap min/max sorting network on `vec3` (R, G, B at once). The bilateral
+filter weights each neighbour by distance and by colour similarity, so it averages noise but keeps edges.
+
+### 5.3 Motion detection (`B`)
+
+`I` = camera frame scaled to 320 px wide; `B += a (I − B)` with `a = 1 − e^(−Δt/τ)`, τ = 3 s (foreground pixels
+adapt 10× slower so a waiting car does not vanish into the background); `M = |I − B| > 18`;
+`M' = dilate(dilate(erode(M)))`; 8-connected components (two-pass union-find) with area ≥ 12 → boxes.
+The background restarts when the camera moves, and the CCTV stops panning while detection is on.
+Thumbnails of `B`, `|I − B|` and `M'` are shown live. Moving shadows are detected too — a known limitation of
+plain background subtraction worth discussing.
+
+### 5.4 Image Operation Lab (view `0` or `V`)
 
 ```text
  ORIGINAL (input)          |   OPERATION  ( light )   |   PROCESSED (output)
@@ -141,6 +173,7 @@ No external image/model assets — every object, texture pattern and person is g
 - **Noise:** none / Gaussian (σ = 25) / salt-and-pepper (8 %), and **PSNR = 10 log10(255² / MSE)** of input and output
   against the clean image — quantitative noise-reduction analysis.
 - Border handling: clamp-to-edge (dimmed cells in the zoom show the repeated edge values).
+- `U` (or the button) sends the current kernel to the live CCTV views 4 and 7.
 
 ---
 
@@ -173,8 +206,13 @@ NightWatch.exe --shot lab.bmp --camera cctv --lab --labkeys "OII^^"
 | `X` | Shadows on/off |
 | `F` | Shading: Phong → Gouraud → Flat |
 | `L` | Lights: all → sun/moon → street lamps → spotlights (IR + headlights) |
-| `K` | Live filter (views 4 / 7) |
-| `H` | Contrast stretch on/off |
+| `K` | Live convolution kernel (views 4 / 7) |
+| `J` | Live denoise: bilateral → median → kernel |
+| `U` | Temporal noise reduction on/off |
+| `H` | Histogram equalization on/off |
+| `B` | Motion detection |
+| `Z` | Bloom on/off |
+| `Tab` | Performance panel |
 | `P` | CCTV auto-pan on/off |
 | `G` | Patrol route + Bézier control points |
 | `Space` | Pause/resume traffic, people and signals |
@@ -189,7 +227,7 @@ NightWatch.exe --shot lab.bmp --camera cctv --lab --labkeys "OII^^"
 **Inside the lab:** click a kernel cell and type a number (`Enter` set, `Tab` next cell, mouse wheel ±1);
 click any pixel of either image; `Space` play/pause, `←`/`→` one pixel, `↑`/`↓` speed, `WASD` move the inspected
 pixel, `O` operation, `P` preset, `Z` 3×3/5×5, `G` grey/RGB, `C` channel, `I` noise, `-`/`=` resolution,
-`N` new snapshot, `Esc` back.
+`N` new snapshot, `U` send the kernel to the live views, `Esc` back.
 
 ---
 
@@ -199,7 +237,11 @@ pixel, `O` operation, `P` preset, `Z` 3×3/5×5, `G` grey/RGB, `C` channel, `I` 
 2. `C` to the CCTV camera (4-DOF chain), `C` again for the chase cam; `G` to show the Bézier control points of each turn.
    Point out signals, cars braking at red, pedestrians waiting and crossing.
 3. `0` — the lab: let Gaussian 3×3 run slowly, pause, step with `→`, explain the numbers; click a kernel cell,
-   type a new weight, watch the result change.
+   type a new weight, watch the result change; `U` to use that kernel on the live feed (`Esc`, `4`).
 4. `I` (salt & pepper) → Gaussian vs `O` median: compare PSNR. Sobel X/Y, Laplacian (`abs()`), Emboss (`+128`).
 5. `O` to histogram equalization: histogram, CDF and the mapping of one pixel.
-6. Back to live views: `3` → `4` → `7`, then `5` depth, `6` depth of field, `8` Sobel, `9` night vision.
+6. Night (`]`), CCTV (`C`), `3` degraded → `7` split: degraded vs restored. `J` compare bilateral / median /
+   kernel, `U` temporal NR off/on, `H` equalization off/on — explain each.
+7. `B` motion detection: boxes around moving cars and people, the three pipeline thumbnails.
+8. `Tab`: GPU cost of every stage (proposal outcome: computational overhead). `5` depth, `6` DoF, `8` Sobel, `9` night vision.
+9. Show the unit tests (`ctest`) and the green CI badge on GitHub.

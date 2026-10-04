@@ -92,10 +92,7 @@ void FilterLab::loadPreset(int index) {
 }
 
 void FilterLab::applyAutoDivisor() {
-    if (!kernel.autoDiv) return;
-    float sum = 0.0f;
-    for (int i = 0; i < kernel.size * kernel.size; ++i) sum += kernel.w[i];
-    kernel.divisor = std::fabs(sum) < 1e-6f ? 1.0f : sum;
+    if (kernel.autoDiv) kernel.autoDivisor();
 }
 
 // Full-resolution RGBA snapshot of the camera image; row 0 = top
@@ -119,7 +116,7 @@ void FilterLab::rebuildInput() {
     dirty = true;
     imgW = RESOLUTIONS[resIndex].x;
     imgH = RESOLUTIONS[resIndex].y;
-    clean.assign(static_cast<size_t>(imgW) * imgH * 3, 0);
+    clean = imgops::Image(imgW, imgH);
     if (!snapshot.empty()) {
         for (int y = 0; y < imgH; ++y) {
             int y0 = y * snapH / imgH, y1 = std::max(y0 + 1, (y + 1) * snapH / imgH);
@@ -130,141 +127,60 @@ void FilterLab::rebuildInput() {
                 for (int sy = y0; sy < y1; ++sy)
                     for (int sx = x0; sx < x1; ++sx, ++n)
                         for (int c = 0; c < 3; ++c) acc[c] += snapshot[(static_cast<size_t>(sy) * snapW + sx) * 4 + c];
-                for (int c = 0; c < 3; ++c) clean[(static_cast<size_t>(y) * imgW + x) * 3 + c] = static_cast<unsigned char>(acc[c] / n + 0.5);
+                clean.set(x, y, static_cast<int>(acc[0] / n + 0.5), static_cast<int>(acc[1] / n + 0.5), static_cast<int>(acc[2] / n + 0.5));
             }
         }
     }
-    if (gray) {
-        for (size_t i = 0; i < clean.size(); i += 3) {
-            int l = static_cast<int>(0.299 * clean[i] + 0.587 * clean[i + 1] + 0.114 * clean[i + 2] + 0.5);
-            clean[i] = clean[i + 1] = clean[i + 2] = static_cast<unsigned char>(l);
-        }
-    }
+    if (gray)
+        for (int y = 0; y < imgH; ++y)
+            for (int x = 0; x < imgW; ++x) {
+                int l = clean.at(x, y, 3);
+                clean.set(x, y, l, l, l);
+            }
     input = clean;
-    unsigned int seed = 12345u;
-    auto rnd = [&seed]() { seed = seed * 1664525u + 1013904223u; return ((seed >> 8) + 0.5) / 16777216.0; };
-    for (size_t i = 0; i < input.size(); i += 3) {
-        if (noise == NOISE_GAUSSIAN) {
-            // Box-Muller: Z = sqrt(-2 ln U1) cos(2 pi U2), sigma = 25 grey levels
-            double z = std::sqrt(-2.0 * std::log(rnd())) * std::cos(6.283185307 * rnd());
-            for (int c = 0; c < 3; ++c) {
-                double zc = gray ? z : std::sqrt(-2.0 * std::log(rnd())) * std::cos(6.283185307 * rnd());
-                input[i + c] = static_cast<unsigned char>(std::clamp(input[i + c] + 25.0 * zc, 0.0, 255.0));
-            }
-        } else if (noise == NOISE_SALT_PEPPER) {
-            double r = rnd();
-            if (r < 0.04) input[i] = input[i + 1] = input[i + 2] = 0;
-            else if (r < 0.08) input[i] = input[i + 1] = input[i + 2] = 255;
-        }
-    }
+    if (noise == NOISE_GAUSSIAN) imgops::addGaussianNoise(input, 25.0, 12345u, gray);   // sigma = 25 grey levels
+    else if (noise == NOISE_SALT_PEPPER) imgops::addSaltPepper(input, 0.08, 12345u);   // 8 % of the pixels
     reveal = std::min(reveal, imgW * imgH);
     focus = glm::clamp(focus, glm::ivec2(0), glm::ivec2(imgW - 1, imgH - 1));
 }
 
 // ---------------------------------------------------------------------------
-// The operations (exactly what the panels show)
+// The operations: all maths lives in ImageOps (unit-tested); the lab only
+// calls it and shows the intermediate numbers.
 // ---------------------------------------------------------------------------
-// Channel 3 = luminance Y = 0.299 R + 0.587 G + 0.114 B
-static int pixelValue(const std::vector<unsigned char>& img, size_t k, int c) {
-    if (c < 3) return img[k + c];
-    return static_cast<int>(0.299 * img[k] + 0.587 * img[k + 1] + 0.114 * img[k + 2] + 0.5);
-}
+int FilterLab::inAt(int x, int y, int c) const { return input.at(x, y, c); }
+int FilterLab::outAt(int x, int y, int c) const { return output.at(x, y, c); }
 
-int FilterLab::inAt(int x, int y, int c) const {
-    x = std::clamp(x, 0, imgW - 1);
-    y = std::clamp(y, 0, imgH - 1);
-    return pixelValue(input, (static_cast<size_t>(y) * imgW + x) * 3, c);
-}
-
-int FilterLab::outAt(int x, int y, int c) const {
-    x = std::clamp(x, 0, imgW - 1);
-    y = std::clamp(y, 0, imgH - 1);
-    return pixelValue(output, (static_cast<size_t>(y) * imgW + x) * 3, c);
-}
-
-// out(x,y) = clamp( [ sum_ij w(i,j) * in(x+i, y+j) ] / divisor  (then |.| and/or +128) )
 int FilterLab::convolveAt(int x, int y, int c, float* sumOut) const {
-    int k = kernel.size, r = k / 2;
-    float sum = 0.0f;
-    for (int j = 0; j < k; ++j)
-        for (int i = 0; i < k; ++i) sum += kernel.w[j * k + i] * inAt(x + i - r, y + j - r, c);
-    if (sumOut) *sumOut = sum;
-    float v = sum / kernel.divisor;
-    if (kernel.absolute) v = std::fabs(v);
-    if (kernel.offset128) v += 128.0f;
-    return std::clamp(static_cast<int>(std::lround(v)), 0, 255);
+    return imgops::convolvePixel(input, kernel, x, y, c, sumOut);
 }
 
 void FilterLab::windowValues(int x, int y, int c, std::vector<int>& vals) const {
-    int k = kernel.size, r = k / 2;
-    vals.clear();
-    for (int j = -r; j <= r; ++j)
-        for (int i = -r; i <= r; ++i) vals.push_back(inAt(x + i, y + j, c));
-    std::sort(vals.begin(), vals.end());
+    imgops::windowSorted(input, kernel.size, x, y, c, vals);
 }
 
 void FilterLab::compute() {
     dirty = false;
-    output.assign(input.size(), 0);
-    const int channels = gray ? 1 : 3;
-
-    if (op == OP_HISTEQ) {
-        // On the luminance Y (grey: the only channel):
-        //   h(v) = number of pixels with Y = v;  cdf(v) = sum_{u<=v} h(u)
-        //   Y' = round( 255 * (cdf(Y) - cdf_min) / (N - cdf_min) )
-        // Colour pixels are scaled by Y'/Y so their hue is kept.
-        const int N = imgW * imgH;
-        std::fill(hist[0], hist[0] + 256, 0);
-        for (int i = 0; i < N; ++i) hist[0][pixelValue(input, static_cast<size_t>(i) * 3, 3)]++;
-        int run = 0, cdfMin = 0;
-        for (int v = 0; v < 256; ++v) {
-            run += hist[0][v];
-            cdf[0][v] = run;
-            if (cdfMin == 0 && run > 0) cdfMin = run;
-        }
-        for (int i = 0; i < N; ++i) {
-            size_t k = static_cast<size_t>(i) * 3;
-            int y = pixelValue(input, k, 3);
-            int ye = N > cdfMin ? static_cast<int>(std::lround(255.0 * (cdf[0][y] - cdfMin) / (N - cdfMin))) : y;
-            double gain = ye / std::max(1.0, static_cast<double>(y));
-            for (int c = 0; c < 3; ++c)
-                output[k + c] = static_cast<unsigned char>(std::clamp(static_cast<int>(std::lround(y == 0 ? ye : input[k + c] * gain)), 0, 255));
-        }
-    } else {
-        std::vector<int> vals;
-        for (int y = 0; y < imgH; ++y)
-            for (int x = 0; x < imgW; ++x)
-                for (int c = 0; c < channels; ++c) {
-                    int v;
-                    if (op == OP_CONVOLVE) v = convolveAt(x, y, c);
-                    else {
-                        windowValues(x, y, c, vals);
-                        v = op == OP_MEDIAN ? vals[vals.size() / 2] : (op == OP_MIN ? vals.front() : vals.back());
-                    }
-                    output[(static_cast<size_t>(y) * imgW + x) * 3 + c] = static_cast<unsigned char>(v);
-                }
+    switch (op) {
+        case OP_CONVOLVE: imgops::convolve(input, kernel, output, gray); break;
+        case OP_MEDIAN:   imgops::rankFilter(input, kernel.size, imgops::Rank::Median, output, gray); break;
+        case OP_MIN:      imgops::rankFilter(input, kernel.size, imgops::Rank::Min, output, gray); break;
+        case OP_MAX:      imgops::rankFilter(input, kernel.size, imgops::Rank::Max, output, gray); break;
+        case OP_HISTEQ:   imgops::equalize(input, output, &hist); break;
+        default: break;
     }
-    if (gray)
-        for (size_t i = 0; i < output.size(); i += 3) output[i + 1] = output[i + 2] = output[i];
-
     // PSNR = 10 log10(255^2 / MSE) against the clean (noise-free) image
-    auto psnr = [&](const std::vector<unsigned char>& a) {
-        double mse = 0.0;
-        for (size_t i = 0; i < a.size(); ++i) { double d = double(a[i]) - clean[i]; mse += d * d; }
-        mse /= std::max<size_t>(1, a.size());
-        return mse < 1e-9 ? 99.0 : 10.0 * std::log10(255.0 * 255.0 / mse);
-    };
-    psnrIn = psnr(input);
-    psnrOut = psnr(output);
+    psnrIn = imgops::psnr(input, clean);
+    psnrOut = imgops::psnr(output, clean);
     uploadTextures();
 }
 
 void FilterLab::uploadTextures() {
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glBindTexture(GL_TEXTURE_2D, texIn);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, imgW, imgH, 0, GL_RGB, GL_UNSIGNED_BYTE, input.data());
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, imgW, imgH, 0, GL_RGB, GL_UNSIGNED_BYTE, input.px.data());
     glBindTexture(GL_TEXTURE_2D, texOut);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, imgW, imgH, 0, GL_RGB, GL_UNSIGNED_BYTE, output.data());
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, imgW, imgH, 0, GL_RGB, GL_UNSIGNED_BYTE, output.px.data());
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 }
 
@@ -285,6 +201,7 @@ void FilterLab::setFocusFromReveal() {
 
 void FilterLab::update(float dt) {
     if (!active) return;
+    sentFlash = std::max(0.0f, sentFlash - dt);
     if (inputDirty && !snapshot.empty()) rebuildInput();
     if (dirty && !input.empty()) compute();
     const int N = imgW * imgH;
@@ -356,6 +273,9 @@ void FilterLab::onKey(int key) {
         case GLFW_KEY_C: channel = (channel + 1) % 3; break;
         case GLFW_KEY_I: noise = static_cast<LabNoise>((noise + 1) % NOISE_COUNT); inputDirty = true; break;
         case GLFW_KEY_N: captureRequested = true; break;
+        case GLFW_KEY_U:
+            if (op == OP_CONVOLVE) { sendToLive = true; sentFlash = 2.5f; }
+            break;
         case GLFW_KEY_MINUS: resIndex = std::max(0, resIndex - 1); inputDirty = true; restartScan(); break;
         case GLFW_KEY_EQUAL: resIndex = std::min(RES_COUNT - 1, resIndex + 1); inputDirty = true; restartScan(); break;
         case GLFW_KEY_Z: {
@@ -375,6 +295,14 @@ void FilterLab::onKey(int key) {
         }
         default: break;
     }
+}
+
+std::string FilterLab::kernelName() const {
+    bool edited = false;
+    const Preset& p = PRESETS[presetIndex];
+    if (p.size != kernel.size) edited = true;
+    for (int i = 0; i < kernel.size * kernel.size && !edited; ++i) edited = kernel.w[i] != p.w[i];
+    return std::string(p.name) + (edited ? " (edited)" : "");
 }
 
 std::string FilterLab::statusLine() const {
@@ -473,7 +401,6 @@ void FilterLab::render(Overlay2D& ui, const GeometryManager& geo, int W, int H, 
     const bool rank = op == OP_MEDIAN || op == OP_MIN || op == OP_MAX;
     const int K = op == OP_HISTEQ ? 1 : kernel.size, r = K / 2;
     const int ch = op == OP_HISTEQ ? (gray ? 0 : 3) : (gray ? 0 : channel);
-    const int hc = 0;   // histogram arrays (luminance)
     const float row2 = yImg + ih + 34.0f * u;
     const float row2H = H - 70.0f * u - row2;
 
@@ -620,14 +547,14 @@ void FilterLab::render(Overlay2D& ui, const GeometryManager& geo, int W, int H, 
                 bool outside = x < 0 || y < 0 || x >= imgW || y >= imgH;
                 int cxp = std::clamp(x, 0, imgW - 1), cyp = std::clamp(y, 0, imgH - 1);
                 bool shown = !isOut || (cyp * imgW + cxp) < reveal;
-                const std::vector<unsigned char>& img = isOut ? output : input;
-                size_t k = (static_cast<size_t>(cyp) * imgW + cxp) * 3;
-                glm::vec4 col = gray ? grayCol(img[k]) : glm::vec4(img[k] / 255.0f, img[k + 1] / 255.0f, img[k + 2] / 255.0f, 1.0f);
+                const imgops::Image& img = isOut ? output : input;
+                size_t k = img.index(cxp, cyp);
+                glm::vec4 col = gray ? grayCol(img.px[k]) : glm::vec4(img.px[k] / 255.0f, img.px[k + 1] / 255.0f, img.px[k + 2] / 255.0f, 1.0f);
                 if (!shown) col = glm::vec4(0.07f, 0.08f, 0.11f, 1.0f);
                 if (outside) col *= glm::vec4(0.45f, 0.45f, 0.45f, 1.0f);
                 float cx = px0 + i * cell, cy = py0 + j * cell;
                 ui.rect(cx + 1, cy + 1, cell - 2, cell - 2, col);
-                std::string label = shown ? std::to_string(pixelValue(img, k, ch)) : "?";
+                std::string label = shown ? std::to_string(img.at(cxp, cyp, ch)) : "?";
                 fitted(ui, cx + cell * 0.5f, cy + cell * 0.5f, cell, label, ts * 1.1f, shown ? textOn(col) : DIM);
             }
         float kx = px0 + (half - r) * cell, ky = py0 + (half - r) * cell;
@@ -708,26 +635,25 @@ void FilterLab::render(Overlay2D& ui, const GeometryManager& geo, int W, int H, 
         float cx0 = xM + 10 * u, cy0 = row2 + 4 * u, cw = midW - 20 * u, chh = row2H * 0.62f;
         ui.rect(cx0, cy0, cw, chh, glm::vec4(0.06f, 0.065f, 0.09f, 1.0f));
         int hmax = 1;
-        for (int v = 0; v < 256; ++v) hmax = std::max(hmax, hist[hc][v]);
+        for (int v = 0; v < 256; ++v) hmax = std::max(hmax, hist.count[v]);
         for (int v = 0; v < 256; ++v) {
-            float bh = chh * hist[hc][v] / static_cast<float>(hmax);
+            float bh = chh * hist.count[v] / static_cast<float>(hmax);
             ui.rect(cx0 + cw * v / 256.0f, cy0 + chh - bh, std::max(1.0f, cw / 256.0f), bh, glm::vec4(0.45f, 0.55f, 0.75f, 1.0f));
         }
         for (int v = 1; v < 256; ++v)
-            ui.line({ cx0 + cw * (v - 1) / 256.0f, cy0 + chh - chh * cdf[hc][v - 1] / static_cast<float>(Ntot) },
-                    { cx0 + cw * v / 256.0f, cy0 + chh - chh * cdf[hc][v] / static_cast<float>(Ntot) }, 2.0f, YELLOW);
+            ui.line({ cx0 + cw * (v - 1) / 256.0f, cy0 + chh - chh * hist.cdf[v - 1] / static_cast<float>(Ntot) },
+                    { cx0 + cw * v / 256.0f, cy0 + chh - chh * hist.cdf[v] / static_cast<float>(Ntot) }, 2.0f, YELLOW);
         int vin = inAt(focus.x, focus.y, ch);
-        float vx = cx0 + cw * (vin + 0.5f) / 256.0f, vy = cy0 + chh - chh * cdf[hc][vin] / static_cast<float>(Ntot);
+        float vx = cx0 + cw * (vin + 0.5f) / 256.0f, vy = cy0 + chh - chh * hist.cdf[vin] / static_cast<float>(Ntot);
         ui.line({ vx, cy0 + chh }, { vx, vy }, 1.5f, RED);
         ui.line({ vx, vy }, { cx0 + cw, vy }, 1.5f, CYAN);
         ui.text(cx0 + 4 * u, cy0 + 4 * u, "histogram h(v)", ts * 0.8f, glm::vec4(0.55f, 0.65f, 0.9f, 1.0f));
         ui.text(cx0 + 4 * u, cy0 + 16 * u, "cdf(v)", ts * 0.8f, YELLOW);
-        int cdfMin = 0;
-        for (int v = 0; v < 256 && cdfMin == 0; ++v) cdfMin = cdf[hc][v];
+        int cdfMin = hist.cdfMin;
         float ty = cy0 + chh + 8 * u;
-        ui.text(mx, ty, "v = " + std::to_string(vin) + "   cdf(v) = " + std::to_string(cdf[hc][vin]) + "   cdf_min = " + std::to_string(cdfMin) +
+        ui.text(mx, ty, "v = " + std::to_string(vin) + "   cdf(v) = " + std::to_string(hist.cdf[vin]) + "   cdf_min = " + std::to_string(cdfMin) +
                 "   N = " + std::to_string(Ntot), ts * 0.9f, WHITE);
-        ui.text(mx, ty + 14 * u, "out = 255 x (" + std::to_string(cdf[hc][vin]) + " - " + std::to_string(cdfMin) + ") / (" +
+        ui.text(mx, ty + 14 * u, "out = 255 x (" + std::to_string(hist.cdf[vin]) + " - " + std::to_string(cdfMin) + ") / (" +
                 std::to_string(Ntot) + " - " + std::to_string(cdfMin) + ")  ->  " + std::to_string(result), ts * 0.9f, CYAN);
     }
 
@@ -746,10 +672,17 @@ void FilterLab::render(Overlay2D& ui, const GeometryManager& geo, int W, int H, 
     if (tog("slower", false, 56)) onKey(GLFW_KEY_DOWN);
     if (tog("faster", false, 56)) onKey(GLFW_KEY_UP);
     if (tog("finish", false, 56)) onKey(GLFW_KEY_ENTER);
+    if (op == OP_CONVOLVE && tog("use in live CCTV (U)", sentFlash > 0.0f, 150)) onKey(GLFW_KEY_U);
+    if (sentFlash > 0.0f) {
+        std::string msg = "Kernel sent to the live CCTV pipeline: press ESC, then 4 or 7";
+        float mw = ui.textWidth(msg, ts * 1.2f);
+        ui.rect(W * 0.5f - mw * 0.5f - 10 * u, 4 * u, mw + 20 * u, 22 * u, glm::vec4(0.05f, 0.3f, 0.12f, 0.95f));
+        ui.text(W * 0.5f - mw * 0.5f, 10 * u, msg, ts * 1.2f, glm::vec4(0.5f, 1.0f, 0.6f, 1.0f));
+    }
     ui.text(m, H - 37 * u, "MOUSE: click a kernel cell and type a number (Enter = set, Tab = next cell)   wheel on a cell = +/-1   "
             "click any pixel of either image to inspect it", ts * 0.85f, DIM);
     ui.text(m, H - 22 * u, "KEYS: SPACE play  LEFT/RIGHT step  UP/DOWN speed  WASD move pixel  O operation  P preset  "
-            "Z 3x3/5x5  G grey  C channel  I noise  -/= resolution  N snapshot  ESC back", ts * 0.85f, DIM);
+            "Z 3x3/5x5  G grey  C channel  I noise  -/= res  N snapshot  U use live  ESC back", ts * 0.85f, DIM);
     ui.end();
     clickPending = false;
 }

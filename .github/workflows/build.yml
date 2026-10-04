@@ -1,0 +1,52 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows-mingw:
+    name: Windows (MinGW-w64, GCC)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - name: Checkout (with the GLFW submodule)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up MSYS2 UCRT64 toolchain
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: false
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Unit tests (ImageOps)
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp build/NightWatch.exe dist/
+          cp -r shaders dist/
+          cp README.md LICENSE dist/
+
+      - name: Upload Windows build
+        uses: actions/upload-artifact@v4
+        with:
+          name: NightWatch-windows-x64
+          path: dist/

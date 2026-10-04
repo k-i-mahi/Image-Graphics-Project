@@ -1,4 +1,5 @@
 #include "Geometry.h"
+#include "PerfStats.h"
 #include <cmath>
 #include <glm/gtc/constants.hpp>
 
@@ -48,6 +49,7 @@ void Mesh::setupMesh(const std::vector<Vertex>& vertices, const std::vector<unsi
 }
 
 void Mesh::draw() const {
+    ++g_drawCalls;
     glBindVertexArray(VAO);
     if (hasIndices) {
         glDrawElements(GL_TRIANGLES, indexCount, GL_UNSIGNED_INT, 0);

@@ -89,11 +89,24 @@ One screen, three columns:
 
 ---
 
+## 2b. Design review of version 2 (after the town and the lab)
+
+| # | Problem | Fix (version 3) |
+|---|---|---|
+| 1 | Live "enhanced" view was a fixed contrast curve, not histogram equalization; 3×3 blur barely denoised | Two-pass pipeline: stage texture → GPU-downscaled read-back → histogram → LUT. Bilateral / median / kernel denoise, motion-adaptive temporal NR |
+| 2 | The CCTV only *showed* the town — no image understanding | Motion detection: background subtraction, opening, connected components, live insets |
+| 3 | Proposal outcome "evaluate the computational overhead" unmet | GPU timer queries per stage + draw-call counter (`Tab`) |
+| 4 | Night looked flat — emitters did not glow | Glow mask in alpha + separable-Gaussian bloom |
+| 5 | Lab kernels and live kernels were separate worlds | `U` in the lab sends the kernel to the live views |
+| 6 | Algorithms lived inside UI code; no tests, no CI | `ImageOps` library, 39 unit-test checks, GitHub Actions build + test + artifact |
+| 7 | Mipmap read-back of an FBO attachment returned zeros after the first frame on this driver | Replaced by a blit-downscale + `glReadPixels` (`Downsampler`) |
+
 ## 3. Order of work
 
 1. [x] **Town world + traffic + people** (Part A) — done 2026-10-05
 2. [x] **Image Operation Lab** (Part B) — done 2026-10-05
 3. [x] Real histogram equalization + PSNR + median/salt-and-pepper (in the lab) — done 2026-10-05
-4. [ ] Real histogram equalization in the live CCTV pipeline (view 4) — the current view 4 is still a contrast curve
-5. [ ] Motion detection by frame differencing, timestamp/camera-ID HUD, per-stage timing panel (Part C)
-6. [ ] Report screenshots + final README pass
+4. [x] Real histogram equalization in the live CCTV pipeline (view 4) — done (v3)
+5. [x] Motion detection, timestamp/camera-ID HUD, per-stage timing panel — done (v3)
+6. [x] Bloom, bilateral + temporal denoising, unit tests, CI — done (v3)
+7. [ ] Ideas: frequency-domain filtering (DFT) in the lab, CLAHE, detection accuracy vs. simulator ground truth

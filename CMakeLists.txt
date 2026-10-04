@@ -15,6 +15,10 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/extern/glfw/CMakeLists.txt")
     add_subdirectory(extern/glfw)
 endif()
 
+# Image processing algorithms: plain C++, no OpenGL, unit-tested
+add_library(imageops STATIC src/ImageOps.cpp include/ImageOps.h)
+target_include_directories(imageops PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
 # Source files
 set(SOURCES
     src/main.cpp
@@ -29,6 +33,9 @@ set(SOURCES
     src/Traffic.cpp
     src/Overlay2D.cpp
     src/FilterLab.cpp
+    src/Bloom.cpp
+    src/CctvAnalytics.cpp
+    src/PerfStats.cpp
     src/Environment.cpp
     src/ShadowMap.cpp
     extern/glad/src/glad.c
@@ -49,6 +56,9 @@ set(HEADERS
     include/Kernels.h
     include/Overlay2D.h
     include/FilterLab.h
+    include/Bloom.h
+    include/CctvAnalytics.h
+    include/PerfStats.h
     include/Environment.h
     include/ShadowMap.h
 )
@@ -62,6 +72,7 @@ target_include_directories(NightWatch PRIVATE
 )
 
 target_link_libraries(NightWatch PRIVATE
+    imageops
     glfw
     opengl32
 )
@@ -77,3 +88,12 @@ add_custom_command(TARGET NightWatch POST_BUILD
 if(MINGW)
     target_link_options(NightWatch PRIVATE -static -static-libgcc -static-libstdc++)
 endif()
+
+# Unit tests:  ctest --test-dir build-mingw   (or run imageops_tests.exe)
+enable_testing()
+add_executable(imageops_tests tests/test_imageops.cpp)
+target_link_libraries(imageops_tests PRIVATE imageops)
+if(MINGW)
+    target_link_options(imageops_tests PRIVATE -static -static-libgcc -static-libstdc++)
+endif()
+add_test(NAME imageops COMMAND imageops_tests)
