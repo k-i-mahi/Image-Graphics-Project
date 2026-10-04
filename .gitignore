@@ -1,0 +1,29 @@
+# Build output
+build/
+build-*/
+out/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+compile_commands.json
+*.exe
+*.obj
+*.o
+*.a
+*.lib
+*.pdb
+*.ilk
+
+# Runtime output (screenshots saved by F12 / --shot)
+*.bmp
+*.log
+
+# Editors / tools
+.vs/
+.vscode/
+.idea/
+.cache/
+*.user
+*.swp
+.DS_Store
+Thumbs.db
